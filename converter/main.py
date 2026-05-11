@@ -21,9 +21,23 @@ app = FastAPI(title="Supavault Converter")
 OFFICE_EXTENSIONS = {"pptx", "ppt", "docx", "doc"}
 PDF_EXTENSIONS = {"pdf"}
 SUPPORTED_EXTENSIONS = OFFICE_EXTENSIONS | PDF_EXTENSIONS
-CONVERT_TIMEOUT = 120
+CONVERT_TIMEOUT = 120  # LibreOffice subprocess timeout (seconds)
+EXTRACT_TIMEOUT = 180  # opendataloader extraction timeout (seconds)
+MAX_SOURCE_BYTES = 200 * 1024 * 1024  # 200 MB — hard cap on downloaded file size
+
 CONVERTER_SECRET = os.environ.get("CONVERTER_SECRET", "")
-S3_HOST_SUFFIX = ".amazonaws.com"
+# Bucket name from env — used to lock the S3 URL allowlist to OUR bucket
+# rather than any `*.amazonaws.com` URL (which would let any S3-hosted file
+# be processed by this service).
+S3_BUCKET = os.environ.get("S3_BUCKET", "")
+S3_REGION = os.environ.get("AWS_REGION", "us-east-1")
+
+# Refuse to start in "public mode". Setting CONVERTER_SECRET is mandatory.
+if not CONVERTER_SECRET:
+    raise RuntimeError(
+        "CONVERTER_SECRET environment variable is required. "
+        "Generate a random string and set it on both the API and converter services."
+    )
 
 
 class ExtractRequest(BaseModel):
@@ -34,8 +48,26 @@ class ExtractRequest(BaseModel):
 
 def _validate_s3_url(url: str) -> None:
     parsed = urlparse(url)
-    if not parsed.hostname or not parsed.hostname.endswith(S3_HOST_SUFFIX):
-        raise HTTPException(400, "URLs must point to S3")
+    if not parsed.hostname:
+        raise HTTPException(400, "URL has no hostname")
+    if not S3_BUCKET:
+        # Fall back to broad check if bucket isn't configured. Less safe but
+        # the service still works for self-hosters.
+        if not parsed.hostname.endswith(".amazonaws.com"):
+            raise HTTPException(400, "URLs must point to S3")
+        return
+    # Strict: only allow URLs pointing at our specific bucket. Accept both
+    # virtual-host style (`{bucket}.s3.{region}.amazonaws.com`) and path
+    # style (`s3.{region}.amazonaws.com/{bucket}/...`).
+    expected_vhost = f"{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com"
+    expected_vhost_global = f"{S3_BUCKET}.s3.amazonaws.com"
+    vhost_ok = parsed.hostname in (expected_vhost, expected_vhost_global)
+    path_ok = (
+        parsed.hostname in (f"s3.{S3_REGION}.amazonaws.com", "s3.amazonaws.com")
+        and parsed.path.lstrip("/").startswith(f"{S3_BUCKET}/")
+    )
+    if not (vhost_ok or path_ok):
+        raise HTTPException(400, "URL does not point to the configured S3 bucket")
 
 
 def _element_to_markdown(el: dict) -> str:
@@ -157,10 +189,21 @@ async def extract(
     with tempfile.TemporaryDirectory(dir="/tmp/conversions") as tmpdir:
         source_path = Path(tmpdir) / f"source.{ext}"
 
+        # Stream the download and abort if the file exceeds MAX_SOURCE_BYTES.
+        # Don't buffer the whole response into memory.
         async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as client:
-            resp = await client.get(req.source_url)
-            resp.raise_for_status()
-            await asyncio.to_thread(source_path.write_bytes, resp.content)
+            async with client.stream("GET", req.source_url) as resp:
+                resp.raise_for_status()
+                total = 0
+                with open(source_path, "wb") as f:
+                    async for chunk in resp.aiter_bytes(64 * 1024):
+                        total += len(chunk)
+                        if total > MAX_SOURCE_BYTES:
+                            raise HTTPException(
+                                413,
+                                f"Source file exceeds {MAX_SOURCE_BYTES} bytes",
+                            )
+                        f.write(chunk)
 
         if ext in OFFICE_EXTENSIONS:
             pdf_path = await asyncio.to_thread(_convert_to_pdf, source_path, tmpdir)
@@ -169,7 +212,19 @@ async def extract(
 
         extract_dir = Path(tmpdir) / "extract"
         extract_dir.mkdir()
-        pages = await asyncio.to_thread(_extract_pages, str(pdf_path), str(extract_dir))
+        # Wall-clock bound on opendataloader. It runs in a thread so this
+        # won't kill the underlying Java process if it deadlocks, but it
+        # prevents the request from hanging the API indefinitely.
+        try:
+            pages = await asyncio.wait_for(
+                asyncio.to_thread(_extract_pages, str(pdf_path), str(extract_dir)),
+                timeout=EXTRACT_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                504,
+                f"PDF extraction exceeded {EXTRACT_TIMEOUT}s timeout",
+            )
 
     page_count = len(pages)
     logger.info("Extracted %s: %d pages (request_id=%s)", ext, page_count, req.request_id or "none")

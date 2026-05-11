@@ -116,6 +116,27 @@ def _doc_to_disk_path(doc: dict) -> Path | None:
     return resolved if resolved.is_relative_to(ws) else None
 
 
+def _merge_text_anchors(payloads: list[dict], mapped) -> list[dict]:
+    """Same as the hosted helper — merge parser-computed text_anchors back
+    onto incoming highlight payloads."""
+    out: list[dict] = []
+    for i, h in enumerate(payloads):
+        if not isinstance(h, dict):
+            continue
+        entry = dict(h)
+        if i < len(mapped) and mapped[i].text_anchor is not None:
+            ta = mapped[i].text_anchor
+            entry["textAnchor"] = {
+                "textStart": ta.text_start,
+                "textEnd": ta.text_end,
+                "textContent": ta.text_content,
+                "prefix": ta.prefix,
+                "suffix": ta.suffix,
+            }
+        out.append(entry)
+    return out
+
+
 class LocalDocumentService(DocumentService):
 
     def __init__(self, db, user_id: str):
@@ -175,11 +196,14 @@ class LocalDocumentService(DocumentService):
 
         return row
 
-    async def create_web_clip(self, kb_id: str, url: str, title: str, html: str) -> dict:
+    async def create_web_clip(
+        self, kb_id: str, url: str, title: str, html: str,
+        highlights: list[dict] | None = None,
+    ) -> dict:
         from html_parser import Parser
 
         parser = Parser(html, url=url, content_only=True)
-        result = parser.parse()
+        result = parser.parse(highlights=highlights or [])
         markdown = result.content
 
         filename = re.sub(r"[^\w\s\-.]", "", title.lower().replace(" ", "-"))[:80] + ".html"
@@ -203,11 +227,47 @@ class LocalDocumentService(DocumentService):
 
         row = await self.doc_repo.create_note(kb_id, self.user_id, filename, path, title, markdown, [])
 
+        if highlights:
+            enriched = _merge_text_anchors(highlights, result.highlights)
+            await self.doc_repo.replace_highlights(str(row["id"]), self.user_id, enriched)
+
+        await self.doc_repo.set_metadata_field(str(row["id"]), "source_url", url)
+
         if markdown:
             chunks = chunk_text(markdown)
             await self.chunk_repo.store(str(row["id"]), self.user_id, kb_id, chunks)
 
         return row
+
+    async def get_by_source_url(self, url: str) -> dict | None:
+        return await self.doc_repo.get_by_source_url(url)
+
+    async def get_highlights(self, doc_id: str) -> dict | None:
+        return await self.doc_repo.get_highlights(doc_id)
+
+    async def replace_highlights(
+        self, doc_id: str, highlights: list[dict],
+        expected_version: int | None = None,
+    ) -> dict | None:
+        return await self.doc_repo.replace_highlights(
+            doc_id, self.user_id, highlights, expected_version,
+        )
+
+    async def upsert_highlight(
+        self, doc_id: str, highlight: dict,
+        expected_version: int | None = None,
+    ) -> dict | None:
+        return await self.doc_repo.upsert_highlight(
+            doc_id, self.user_id, highlight, expected_version,
+        )
+
+    async def delete_highlight(
+        self, doc_id: str, highlight_id: str,
+        expected_version: int | None = None,
+    ) -> dict | None:
+        return await self.doc_repo.delete_highlight(
+            doc_id, self.user_id, highlight_id, expected_version,
+        )
 
     async def update_content(self, doc_id: str, content: str) -> dict | None:
         doc = await self.doc_repo.get(doc_id)
@@ -232,6 +292,12 @@ class LocalDocumentService(DocumentService):
         doc = await self.doc_repo.get(doc_id)
         if not doc:
             return None
+
+        # Local mode has a singleton workspace — there's nowhere to move to.
+        # Drop the field if the client sent one rather than failing the call.
+        fields = {k: v for k, v in fields.items() if k != "knowledge_base_id"}
+        if not fields:
+            return doc
 
         old_path = _doc_to_disk_path(doc)
         needs_move = "filename" in fields or "path" in fields

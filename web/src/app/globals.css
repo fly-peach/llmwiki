@@ -404,3 +404,20 @@
   padding-top: 4px !important;
   padding-bottom: 4px !important;
 }
+
+/* User highlights — rendered as ProseMirror inline decorations.
+   Source of truth is documents.highlights JSONB; this style is purely visual.
+   box-decoration-break: clone keeps the yellow contiguous when a highlight
+   wraps across line breaks. */
+.llmwiki-hl {
+  background: rgba(255, 224, 84, 0.55);
+  border-radius: 2px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+.llmwiki-hl[data-llmwiki-comment="1"]::after {
+  content: " ▾";
+  font-size: 0.7em;
+  opacity: 0.6;
+  margin-left: 1px;
+}

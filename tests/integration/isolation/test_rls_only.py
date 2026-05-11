@@ -206,6 +206,46 @@ class TestRLSBlocksDocumentWrites:
             row = await conn.fetchrow("SELECT content FROM documents WHERE id = $1", DOC_B_ID)
         assert row["content"] == "Bob secret content"
 
+    async def test_cannot_update_other_tenant_highlights(self, rls_session):
+        """Highlights live in documents.highlights JSONB. The doc-level
+        default-deny RLS policy must apply to that column too."""
+        async with rls_session(USER_A_ID) as conn:
+            result = await conn.execute(
+                "UPDATE documents SET highlights = '[{\"id\": \"injected\"}]'::jsonb "
+                "WHERE id = $1",
+                DOC_B_ID,
+            )
+        assert "UPDATE 0" in result
+
+    async def test_cannot_update_own_document_highlights_via_rls(self, rls_session):
+        """Documents have only a SELECT policy; UPDATE is default-denied even
+        for the user's own document. This documents that direct RLS-scoped
+        writes are NOT the supported write path — service-role + explicit
+        user_id filter is."""
+        async with rls_session(USER_A_ID) as conn:
+            result = await conn.execute(
+                "UPDATE documents SET highlights = '[]'::jsonb WHERE id = $1",
+                DOC_A_ID,
+            )
+        assert "UPDATE 0" in result
+
+    async def test_cannot_move_other_tenant_doc_via_rls(self, rls_session):
+        """RLS UPDATE default-deny blocks the move-to-different-KB path too.
+        Service-role API does the actual move with explicit user_id filtering."""
+        async with rls_session(USER_A_ID) as conn:
+            result = await conn.execute(
+                "UPDATE documents SET knowledge_base_id = $1 WHERE id = $2",
+                KB_A_ID, DOC_B_ID,
+            )
+        assert "UPDATE 0" in result
+        # Bob's doc still lives in Bob's KB.
+        async with rls_session(USER_B_ID) as conn:
+            row = await conn.fetchrow(
+                "SELECT knowledge_base_id::text FROM documents WHERE id = $1",
+                DOC_B_ID,
+            )
+        assert row["knowledge_base_id"] == KB_B_ID
+
     async def test_cannot_delete_other_tenant_document(self, rls_session):
         async with rls_session(USER_A_ID) as conn:
             result = await conn.execute(

@@ -1,7 +1,32 @@
 import React, { useEffect, useState } from "react";
-import { saveWebPage, savePdf } from "@/lib/api";
+import { saveWebPage, savePdf, type Highlight } from "@/lib/api";
 import KBPicker from "./KBPicker";
 import StatusFeedback, { type Status } from "./StatusFeedback";
+
+const TRACKING_PARAMS = new Set([
+  "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+  "utm_id", "utm_name", "utm_brand", "utm_social",
+  "fbclid", "gclid", "mc_cid", "mc_eid", "ref", "ref_src",
+  "_branch_match_id", "igshid",
+]);
+
+function canonicalize(href: string): string {
+  try {
+    const u = new URL(href);
+    u.hash = "";
+    const keep = new URLSearchParams();
+    u.searchParams.forEach((v, k) => {
+      if (!TRACKING_PARAMS.has(k.toLowerCase())) keep.append(k, v);
+    });
+    u.search = keep.toString() ? `?${keep.toString()}` : "";
+    if (u.pathname.length > 1 && u.pathname.endsWith("/")) {
+      u.pathname = u.pathname.replace(/\/+$/, "");
+    }
+    return u.toString();
+  } catch {
+    return href;
+  }
+}
 
 interface Props {
   apiUrl: string;
@@ -60,22 +85,63 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
 
     let html: string;
     try {
+      // Run in the page so the extension's own marks/UI are stripped from
+      // the snapshot — we don't want yellow <mark> nodes or the popover
+      // floating in the saved HTML.
       const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: tab.tabId },
-        func: () => document.documentElement.outerHTML,
+        func: () => {
+          const clone = document.documentElement.cloneNode(true) as HTMLElement;
+          clone.querySelectorAll(
+            ".llmwiki-pill, .llmwiki-popover, #llmwiki-highlight-style",
+          ).forEach((el) => el.remove());
+          clone.querySelectorAll("mark.llmwiki-hl").forEach((mark) => {
+            const parent = mark.parentNode;
+            if (!parent) return;
+            while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+            parent.removeChild(mark);
+          });
+          return clone.outerHTML;
+        },
       });
       html = result as string;
     } catch {
       throw new Error("Could not extract page content. Try refreshing the page.");
     }
 
+    let highlights: Highlight[] = [];
+    try {
+      const reply = await chrome.tabs.sendMessage(tab.tabId, {
+        type: "GET_PAGE_HIGHLIGHTS",
+      });
+      if (reply?.highlights && Array.isArray(reply.highlights)) {
+        highlights = reply.highlights as Highlight[];
+      }
+    } catch {
+      // Content script may not be present (e.g. PDF, restricted page). Ignore.
+    }
+
     setStatus({ type: "saving", message: "Saving to LLM Wiki..." });
 
-    await saveWebPage(apiUrl, accessToken, knowledgeBaseId, {
-      url: tab.url,
+    const canonicalUrl = canonicalize(tab.url);
+
+    const result = await saveWebPage(apiUrl, accessToken, knowledgeBaseId, {
+      url: canonicalUrl,
       title: title || tab.title,
       html,
+      highlights: highlights.length ? highlights : undefined,
     });
+
+    // Tell the content script about the new doc id so subsequent highlight
+    // edits in this same tab can persist via PATCH /highlights without a reload.
+    try {
+      await chrome.tabs.sendMessage(tab.tabId, {
+        type: "DOCUMENT_SAVED",
+        documentId: result.id,
+      });
+    } catch {
+      // Page might be closed or content script unavailable — fine.
+    }
 
     setStatus({ type: "success" });
   }

@@ -47,6 +47,31 @@ class OCRService:
                 "Please contact the administrator."
             )
 
+    async def _check_user_page_limit(self, user_id: str, new_pages: int, conn=None):
+        """Quota check — uses an advisory lock when given a transaction connection so concurrent jobs serialize."""
+        executor = conn or self._pool
+        if conn is not None:
+            # pg_advisory_xact_lock serializes concurrent OCR jobs for the same
+            # user inside this transaction; releases on commit/rollback.
+            await conn.execute(
+                "SELECT pg_advisory_xact_lock(hashtext($1::text))", user_id,
+            )
+        row = await executor.fetchrow(
+            "SELECT u.page_limit, "
+            "COALESCE((SELECT SUM(page_count) FROM documents WHERE user_id = $1 AND NOT archived), 0)::bigint AS used "
+            "FROM users u WHERE u.id = $1",
+            user_id,
+        )
+        if not row:
+            return
+        limit = row["page_limit"]
+        used = row["used"] or 0
+        if used + new_pages > limit:
+            raise ValueError(
+                f"Page limit reached: this document adds {new_pages} pages, "
+                f"you have {used}/{limit}. Delete documents or upgrade your plan."
+            )
+
     async def _do_process(self, document_id: str, user_id: str):
         try:
             await self._check_global_limits(document_id)
@@ -95,6 +120,8 @@ class OCRService:
         if settings.PDF_BACKEND == "mistral":
             if not settings.MISTRAL_API_KEY:
                 raise ValueError("MISTRAL_API_KEY not configured — cannot process PDFs")
+            # Cheap pre-check: refuse if user is already over quota so we don't burn the Mistral call.
+            await self._check_user_page_limit(user_id, 1)
             presigned_url = await self._s3.generate_presigned_get(s3_source_key)
             ocr_result = await self._call_mistral_ocr(presigned_url, "document_url")
             await self._store_ocr_result(document_id, user_id, kb_id, ocr_result)
@@ -111,6 +138,7 @@ class OCRService:
             pdf_key = await self._convert_to_pdf_s3(document_id, user_id, s3_source_key, ext)
             if not settings.MISTRAL_API_KEY:
                 raise ValueError("MISTRAL_API_KEY not configured")
+            await self._check_user_page_limit(user_id, 1)
             presigned_url = await self._s3.generate_presigned_get(pdf_key)
             ocr_result = await self._call_mistral_ocr(presigned_url, "document_url")
             await self._store_ocr_result(document_id, user_id, kb_id, ocr_result)
@@ -296,40 +324,51 @@ class OCRService:
                 f"Document has {num_pages} pages, maximum is {settings.QUOTA_MAX_PAGES_PER_DOC}."
             )
 
+        full_content = "\n\n---\n\n".join(md for _, md in page_contents)
+        chunks = chunk_pages(page_contents)
+
         conn = await self._pool.acquire()
         try:
-            await conn.execute("DELETE FROM document_pages WHERE document_id = $1", document_id)
-            for num, md in page_contents:
-                elements = (page_elements or {}).get(num)
+            async with conn.transaction():
+                # Quota check + writes happen in the same transaction under
+                # an advisory lock keyed on user_id so concurrent OCR jobs
+                # can't both pass and over-commit.
+                await self._check_user_page_limit(user_id, num_pages, conn=conn)
+                await conn.execute("DELETE FROM document_pages WHERE document_id = $1", document_id)
+                for num, md in page_contents:
+                    elements = (page_elements or {}).get(num)
+                    await conn.execute(
+                        "INSERT INTO document_pages (document_id, page, content, elements) "
+                        "VALUES ($1, $2, $3, $4)",
+                        document_id, num, md,
+                        json.dumps(elements) if elements else None,
+                    )
                 await conn.execute(
-                    "INSERT INTO document_pages (document_id, page, content, elements) "
-                    "VALUES ($1, $2, $3, $4)",
-                    document_id, num, md,
-                    json.dumps(elements) if elements else None,
+                    "UPDATE documents SET status = 'ready', content = $2, page_count = $3, "
+                    "parser = $4, updated_at = now() WHERE id = $1",
+                    document_id, full_content, num_pages, parser,
                 )
         finally:
             await self._pool.release(conn)
 
-        full_content = "\n\n---\n\n".join(md for _, md in page_contents)
-        chunks = chunk_pages(page_contents)
         await store_chunks(self._pool, document_id, user_id, kb_id, chunks)
-
-        await self._pool.execute(
-            "UPDATE documents SET status = 'ready', content = $2, page_count = $3, "
-            "parser = $4, updated_at = now() WHERE id = $1",
-            document_id, full_content, num_pages, parser,
-        )
         logger.info("Extracted (%s): doc=%s pages=%d chunks=%d", parser, document_id[:8], num_pages, len(chunks))
 
     # ── Image processing ──────────────────────────────────────────────────
 
     async def _process_image(self, document_id: str, user_id: str, s3_source_key: str, ext: str):
         """Images are stored as-is. No OCR. The MCP read tool returns them natively."""
-        await self._pool.execute(
-            "UPDATE documents SET status = 'ready', page_count = 1, parser = 'native', updated_at = now() "
-            "WHERE id = $1",
-            document_id,
-        )
+        conn = await self._pool.acquire()
+        try:
+            async with conn.transaction():
+                await self._check_user_page_limit(user_id, 1, conn=conn)
+                await conn.execute(
+                    "UPDATE documents SET status = 'ready', page_count = 1, parser = 'native', updated_at = now() "
+                    "WHERE id = $1",
+                    document_id,
+                )
+        finally:
+            await self._pool.release(conn)
         logger.info("Image stored: doc=%s", document_id[:8])
 
     # ── HTML processing ───────────────────────────────────────────────────
@@ -355,13 +394,20 @@ class OCRService:
 
         markdown_content = result.content
         chunks = chunk_text(markdown_content)
-        await store_chunks(self._pool, document_id, user_id, kb_id, chunks)
 
-        await self._pool.execute(
-            "UPDATE documents SET status = 'ready', content = $2, page_count = 1, parser = 'webmd', updated_at = now() "
-            "WHERE id = $1",
-            document_id, markdown_content,
-        )
+        conn = await self._pool.acquire()
+        try:
+            async with conn.transaction():
+                await self._check_user_page_limit(user_id, 1, conn=conn)
+                await conn.execute(
+                    "UPDATE documents SET status = 'ready', content = $2, page_count = 1, parser = 'webmd', updated_at = now() "
+                    "WHERE id = $1",
+                    document_id, markdown_content,
+                )
+        finally:
+            await self._pool.release(conn)
+
+        await store_chunks(self._pool, document_id, user_id, kb_id, chunks)
         logger.info("HTML processed: doc=%s chunks=%d", document_id[:8], len(chunks))
 
     # ── Spreadsheet processing ────────────────────────────────────────────
@@ -374,31 +420,32 @@ class OCRService:
 
             sheets = await asyncio.to_thread(self._parse_sheets, str(source_path), ext)
 
+            content_parts = [f"## {name}\n\n{md}" for name, md in sheets]
+            full_content = "\n\n---\n\n".join(content_parts)
+            page_contents = [(i + 1, md) for i, (_, md) in enumerate(sheets)]
+            chunks = chunk_pages(page_contents)
+
             conn = await self._pool.acquire()
             try:
-                await conn.execute("DELETE FROM document_pages WHERE document_id = $1", document_id)
-                content_parts = []
-                for i, (name, md) in enumerate(sheets, 1):
-                    content_parts.append(f"## {name}\n\n{md}")
+                async with conn.transaction():
+                    await self._check_user_page_limit(user_id, len(sheets), conn=conn)
+                    await conn.execute("DELETE FROM document_pages WHERE document_id = $1", document_id)
+                    for i, (name, md) in enumerate(sheets, 1):
+                        await conn.execute(
+                            "INSERT INTO document_pages (document_id, page, content, elements) "
+                            "VALUES ($1, $2, $3, $4)",
+                            document_id, i, md,
+                            json.dumps({"sheet_name": name}),
+                        )
                     await conn.execute(
-                        "INSERT INTO document_pages (document_id, page, content, elements) "
-                        "VALUES ($1, $2, $3, $4)",
-                        document_id, i, md,
-                        json.dumps({"sheet_name": name}),
+                        "UPDATE documents SET status = 'ready', content = $2, page_count = $3, parser = 'openpyxl', updated_at = now() "
+                        "WHERE id = $1",
+                        document_id, full_content, len(sheets),
                     )
             finally:
                 await self._pool.release(conn)
 
-            full_content = "\n\n---\n\n".join(content_parts)
-            page_contents = [(i + 1, md) for i, (_, md) in enumerate(sheets)]
-            chunks = chunk_pages(page_contents)
             await store_chunks(self._pool, document_id, user_id, kb_id, chunks)
-
-            await self._pool.execute(
-                "UPDATE documents SET status = 'ready', content = $2, page_count = $3, parser = 'openpyxl', updated_at = now() "
-                "WHERE id = $1",
-                document_id, full_content, len(sheets),
-            )
             logger.info("Spreadsheet processed: doc=%s sheets=%d chunks=%d", document_id[:8], len(sheets), len(chunks))
 
     @staticmethod
@@ -465,47 +512,45 @@ class OCRService:
                     "image/jpeg",
                 )
 
-        content_parts = []
+        page_count = len(pages)
+        content_parts = [page.get("markdown", "") for page in pages]
+        full_content = "\n\n---\n\n".join(content_parts)
+        page_contents = [(page.get("index", 0) + 1, page.get("markdown", "")) for page in pages]
+        chunks = chunk_pages(page_contents)
+
         conn = await self._pool.acquire()
         try:
-            await conn.execute("DELETE FROM document_pages WHERE document_id = $1", document_id)
-            for page in pages:
-                page_index = page.get("index", 0) + 1
-                page_md = page.get("markdown", "")
-                content_parts.append(page_md)
-
-                elements = {}
-                if page.get("images"):
-                    elements["images"] = [
-                        {k: v for k, v in img.items() if k != "image_base64"}
-                        for img in page["images"]
-                    ]
-                if page.get("dimensions"):
-                    elements["dimensions"] = page["dimensions"]
-                if page.get("tables"):
-                    elements["tables"] = page["tables"]
-
+            async with conn.transaction():
+                await self._check_user_page_limit(user_id, page_count, conn=conn)
+                await conn.execute("DELETE FROM document_pages WHERE document_id = $1", document_id)
+                for page in pages:
+                    page_index = page.get("index", 0) + 1
+                    page_md = page.get("markdown", "")
+                    elements = {}
+                    if page.get("images"):
+                        elements["images"] = [
+                            {k: v for k, v in img.items() if k != "image_base64"}
+                            for img in page["images"]
+                        ]
+                    if page.get("dimensions"):
+                        elements["dimensions"] = page["dimensions"]
+                    if page.get("tables"):
+                        elements["tables"] = page["tables"]
+                    await conn.execute(
+                        "INSERT INTO document_pages (document_id, page, content, elements) "
+                        "VALUES ($1, $2, $3, $4)",
+                        document_id, page_index, page_md,
+                        json.dumps(elements) if elements else None,
+                    )
                 await conn.execute(
-                    "INSERT INTO document_pages (document_id, page, content, elements) "
-                    "VALUES ($1, $2, $3, $4)",
-                    document_id, page_index, page_md,
-                    json.dumps(elements) if elements else None,
+                    "UPDATE documents SET status = 'ready', content = $2, page_count = $3, parser = 'mistral', updated_at = now() "
+                    "WHERE id = $1",
+                    document_id, full_content, page_count,
                 )
         finally:
             await self._pool.release(conn)
 
-        full_content = "\n\n---\n\n".join(content_parts)
-        page_count = len(pages)
-
-        page_contents = [(page.get("index", 0) + 1, page.get("markdown", "")) for page in pages]
-        chunks = chunk_pages(page_contents)
         await store_chunks(self._pool, document_id, user_id, kb_id, chunks)
-
-        await self._pool.execute(
-            "UPDATE documents SET status = 'ready', content = $2, page_count = $3, parser = 'mistral', updated_at = now() "
-            "WHERE id = $1",
-            document_id, full_content, page_count,
-        )
         logger.info("OCR complete: doc=%s pages=%d chunks=%d", document_id[:8], page_count, len(chunks))
 
     async def _call_mistral_ocr(self, url: str, url_type: str = "document_url") -> dict:

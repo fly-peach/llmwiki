@@ -143,6 +143,143 @@ class TestWriteIsolation:
         assert row is not None
 
 
+class TestHighlightIsolation:
+    """Granular highlight + move isolation. New endpoints added in V2:
+    POST /v1/documents/{id}/highlights, DELETE /v1/documents/{id}/highlights/{hid},
+    PATCH /v1/documents/{id} body knowledge_base_id."""
+
+    async def _seed_highlight(self, pool, doc_id, hid="seed-1"):
+        import json
+        payload = json.dumps([{
+            "id": hid,
+            "type": "text",
+            "anchor": None,
+            "textAnchor": {
+                "textStart": 0,
+                "textEnd": 5,
+                "textContent": "hello",
+                "prefix": None,
+                "suffix": None,
+            },
+            "comment": None,
+            "color": "yellow",
+            "createdAt": "2026-05-10T00:00:00Z",
+        }])
+        await pool.execute(
+            "UPDATE documents SET highlights = $1::jsonb WHERE id = $2",
+            payload, doc_id,
+        )
+
+    def _new_highlight(self, hid="alice-injected"):
+        return {
+            "id": hid,
+            "type": "text",
+            "anchor": None,
+            "textAnchor": {
+                "textStart": 0,
+                "textEnd": 5,
+                "textContent": "alice",
+                "prefix": None,
+                "suffix": None,
+            },
+            "comment": None,
+            "color": "yellow",
+            "createdAt": "2026-05-10T00:00:00Z",
+        }
+
+    async def test_get_highlights_cross_tenant_returns_404(self, client):
+        resp = await client.get(
+            f"/v1/documents/{DOC_B_ID}/highlights",
+            headers=auth_headers(USER_A_ID),
+        )
+        assert resp.status_code == 404
+
+    async def test_upsert_highlight_cross_tenant_returns_404(self, client):
+        resp = await client.post(
+            f"/v1/documents/{DOC_B_ID}/highlights",
+            headers=auth_headers(USER_A_ID),
+            json={"highlight": self._new_highlight()},
+        )
+        assert resp.status_code == 404
+
+    async def test_upsert_highlight_cross_tenant_does_not_modify(self, client, pool):
+        await client.post(
+            f"/v1/documents/{DOC_B_ID}/highlights",
+            headers=auth_headers(USER_A_ID),
+            json={"highlight": self._new_highlight()},
+        )
+        row = await pool.fetchrow(
+            "SELECT highlights FROM documents WHERE id = $1", DOC_B_ID,
+        )
+        # Bob's highlights array is empty (default) — must remain so.
+        import json
+        highlights = row["highlights"]
+        if isinstance(highlights, str):
+            highlights = json.loads(highlights)
+        assert highlights == []
+
+    async def test_delete_highlight_cross_tenant_returns_404(self, client, pool):
+        await self._seed_highlight(pool, DOC_B_ID, hid="bob-keep")
+        resp = await client.delete(
+            f"/v1/documents/{DOC_B_ID}/highlights/bob-keep",
+            headers=auth_headers(USER_A_ID),
+        )
+        assert resp.status_code == 404
+
+    async def test_delete_highlight_cross_tenant_does_not_modify(self, client, pool):
+        await self._seed_highlight(pool, DOC_B_ID, hid="bob-keep")
+        await client.delete(
+            f"/v1/documents/{DOC_B_ID}/highlights/bob-keep",
+            headers=auth_headers(USER_A_ID),
+        )
+        row = await pool.fetchrow(
+            "SELECT highlights FROM documents WHERE id = $1", DOC_B_ID,
+        )
+        import json
+        highlights = row["highlights"]
+        if isinstance(highlights, str):
+            highlights = json.loads(highlights)
+        assert any(h.get("id") == "bob-keep" for h in highlights)
+
+    async def test_move_bob_doc_as_alice_returns_404(self, client):
+        resp = await client.patch(
+            f"/v1/documents/{DOC_B_ID}",
+            headers=auth_headers(USER_A_ID),
+            json={"knowledge_base_id": KB_A_ID},
+        )
+        assert resp.status_code == 404
+
+    async def test_move_bob_doc_as_alice_does_not_change_kb(self, client, pool):
+        await client.patch(
+            f"/v1/documents/{DOC_B_ID}",
+            headers=auth_headers(USER_A_ID),
+            json={"knowledge_base_id": KB_A_ID},
+        )
+        row = await pool.fetchrow(
+            "SELECT knowledge_base_id::text FROM documents WHERE id = $1", DOC_B_ID,
+        )
+        assert row["knowledge_base_id"] == KB_B_ID
+
+    async def test_move_alice_doc_to_bob_kb_returns_404(self, client):
+        resp = await client.patch(
+            f"/v1/documents/{DOC_A_ID}",
+            headers=auth_headers(USER_A_ID),
+            json={"knowledge_base_id": KB_B_ID},
+        )
+        assert resp.status_code == 404
+
+    async def test_move_alice_doc_to_bob_kb_does_not_change_kb(self, client, pool):
+        await client.patch(
+            f"/v1/documents/{DOC_A_ID}",
+            headers=auth_headers(USER_A_ID),
+            json={"knowledge_base_id": KB_B_ID},
+        )
+        row = await pool.fetchrow(
+            "SELECT knowledge_base_id::text FROM documents WHERE id = $1", DOC_A_ID,
+        )
+        assert row["knowledge_base_id"] == KB_A_ID
+
+
 class TestBidirectionalIsolation:
     """Verify isolation works in both directions."""
 

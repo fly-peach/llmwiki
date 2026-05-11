@@ -14,16 +14,118 @@ export interface SaveResult {
   status: string;
 }
 
-function authHeaders(accessToken: string | null): HeadersInit {
+export interface HighlightAnchor {
+  xpath: string;
+  endXPath?: string;
+  startOffset: number;
+  endOffset: number;
+  textContent: string;
+  prefix?: string | null;
+  suffix?: string | null;
+}
+
+export interface Highlight {
+  id: string;
+  type: "text" | "pdf";
+  anchor?: HighlightAnchor | null;
+  comment: string | null;
+  color: string;
+  createdAt: string;
+}
+
+export interface DocumentByUrl {
+  id: string;
+  knowledge_base_id: string;
+  title: string | null;
+  path: string;
+  filename: string;
+  version: number;
+  highlights: Highlight[];
+}
+
+export interface HighlightsResponse {
+  id: string;
+  version: number;
+  highlights: Highlight[];
+}
+
+function authHeaders(accessToken: string | null): Record<string, string> {
   if (!accessToken) return {};
   return { Authorization: `Bearer ${accessToken}` };
 }
 
-function jsonHeaders(accessToken: string | null): HeadersInit {
+function jsonHeaders(accessToken: string | null): Record<string, string> {
   return {
     ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
     "Content-Type": "application/json",
   };
+}
+
+// ── smartFetch ──────────────────────────────────────────────
+//
+// MV3 content scripts make `fetch` calls from the page's origin. Most sites
+// (Substack, Medium, console.cloud.google.com, anywhere with strict CSP) will
+// block our API calls via CORS or CSP. The background service worker runs on
+// the extension origin with host_permissions: ["<all_urls>"] — fetches there
+// succeed. So when we're inside a content script we proxy through the
+// background via chrome.runtime.sendMessage. In the popup (which loads on
+// chrome-extension://...) direct fetch already works, so we use it.
+
+function isContentScriptContext(): boolean {
+  if (typeof window === "undefined") return false;
+  // popup/background pages have chrome-extension:// origin
+  return window.location.protocol !== "chrome-extension:";
+}
+
+interface SmartFetchInit {
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+interface SmartFetchResponse {
+  ok: boolean;
+  status: number;
+  data: unknown;
+  text: string;
+}
+
+async function smartFetch(url: string, init?: SmartFetchInit): Promise<SmartFetchResponse> {
+  if (isContentScriptContext()) {
+    const resp = await chrome.runtime.sendMessage({
+      type: "API_FETCH",
+      url,
+      method: init?.method ?? "GET",
+      headers: init?.headers,
+      body: init?.body,
+    });
+    if (resp?.error && resp?.status === 0) {
+      throw new Error(resp.error);
+    }
+    const text =
+      typeof resp?.data === "string"
+        ? resp.data
+        : resp?.data
+          ? JSON.stringify(resp.data)
+          : "";
+    return {
+      ok: !!resp?.ok,
+      status: resp?.status ?? 0,
+      data: resp?.data ?? null,
+      text,
+    };
+  }
+  const res = await fetch(url, init);
+  const text = await res.text();
+  let data: unknown = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      data = text;
+    }
+  }
+  return { ok: res.ok, status: res.status, data, text };
 }
 
 export async function fetchKnowledgeBases(
@@ -55,7 +157,7 @@ export async function saveWebPage(
   apiUrl: string,
   accessToken: string | null,
   knowledgeBaseId: string,
-  payload: { url: string; title: string; html: string },
+  payload: { url: string; title: string; html: string; highlights?: Highlight[] },
 ): Promise<SaveResult> {
   const res = await fetch(
     `${apiUrl}/v1/knowledge-bases/${knowledgeBaseId}/documents/web`,
@@ -72,6 +174,57 @@ export async function saveWebPage(
   return res.json();
 }
 
+export async function getDocumentByUrl(
+  apiUrl: string,
+  accessToken: string | null,
+  url: string,
+): Promise<DocumentByUrl | null> {
+  const res = await smartFetch(
+    `${apiUrl}/v1/documents/by-url?url=${encodeURIComponent(url)}`,
+    { headers: authHeaders(accessToken) },
+  );
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Lookup failed: ${res.status}`);
+  return res.data as DocumentByUrl;
+}
+
+export async function getHighlights(
+  apiUrl: string,
+  accessToken: string | null,
+  documentId: string,
+): Promise<HighlightsResponse> {
+  const res = await smartFetch(
+    `${apiUrl}/v1/documents/${documentId}/highlights`,
+    { headers: authHeaders(accessToken) },
+  );
+  if (!res.ok) throw new Error(`Fetch highlights failed: ${res.status}`);
+  return res.data as HighlightsResponse;
+}
+
+export async function replaceHighlights(
+  apiUrl: string,
+  accessToken: string | null,
+  documentId: string,
+  highlights: Highlight[],
+  expectedVersion?: number,
+): Promise<HighlightsResponse> {
+  const res = await smartFetch(
+    `${apiUrl}/v1/documents/${documentId}/highlights`,
+    {
+      method: "PATCH",
+      headers: jsonHeaders(accessToken),
+      body: JSON.stringify({ highlights, expectedVersion }),
+    },
+  );
+  if (res.status === 409) {
+    throw Object.assign(new Error("Version conflict"), { conflict: true });
+  }
+  if (!res.ok) {
+    throw new Error(`Save highlights failed (${res.status}): ${res.text}`);
+  }
+  return res.data as HighlightsResponse;
+}
+
 export async function savePdf(
   apiUrl: string,
   accessToken: string | null,
@@ -79,10 +232,16 @@ export async function savePdf(
   filename: string,
   knowledgeBaseId: string,
 ): Promise<SaveResult> {
+  // Copy bytes into a fresh ArrayBuffer so the resulting Blob/body matches
+  // the BodyInit / BlobPart types regardless of the source buffer's TypedArray
+  // backing (some lib.dom.d.ts versions reject SharedArrayBuffer-backed views).
+  const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
+  new Uint8Array(pdfBuffer).set(pdfBytes);
+
   // Local mode: use multipart upload
   if (!accessToken) {
     const form = new FormData();
-    form.append("file", new Blob([pdfBytes], { type: "application/pdf" }), filename);
+    form.append("file", new Blob([pdfBuffer], { type: "application/pdf" }), filename);
     form.append("path", "/webclipper/");
     const res = await fetch(`${apiUrl}/v1/upload`, {
       method: "POST",
@@ -105,7 +264,7 @@ export async function savePdf(
     headers: {
       ...authHeaders(accessToken),
       "Tus-Resumable": "1.0.0",
-      "Upload-Length": String(pdfBytes.length),
+      "Upload-Length": String(pdfBuffer.byteLength),
       "Upload-Metadata": metadata,
     },
   });
@@ -128,7 +287,7 @@ export async function savePdf(
       "Upload-Offset": "0",
       "Content-Type": "application/offset+octet-stream",
     },
-    body: pdfBytes,
+    body: pdfBuffer,
   });
   if (!patchRes.ok && patchRes.status !== 204) {
     throw new Error(`Upload failed: ${patchRes.status}`);

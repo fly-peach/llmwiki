@@ -53,6 +53,12 @@ async def lifespan(app: FastAPI):
         return
 
     # ── Hosted mode ──
+    # Prefetch the Supabase JWKS so the first authenticated request doesn't
+    # pay the cold-cache cost and so a JWKS outage at boot is visible
+    # immediately rather than masked behind the first auth error.
+    from auth import prefetch_jwks
+    await prefetch_jwks()
+
     import asyncpg
     pool = await asyncpg.create_pool(settings.DATABASE_URL, min_size=2, max_size=10)
     app.state.pool = pool
@@ -173,6 +179,20 @@ async def _local_lifespan(app: FastAPI):
 
 
 app = FastAPI(title="LLM Wiki API", lifespan=lifespan)
+
+# Rate limiting — applied as middleware so every authenticated route gets a
+# broad ceiling. Hot endpoints can add tighter `@limiter.limit(...)` overrides.
+# Skip in local mode where there's only one user.
+if settings.MODE != "local":
+    from slowapi import _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.middleware import SlowAPIMiddleware
+
+    from infra.rate_limit import limiter
+
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    app.add_middleware(SlowAPIMiddleware)
 
 app.add_middleware(
     CORSMiddleware,

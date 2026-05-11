@@ -196,6 +196,189 @@ class SQLiteDocumentRepository:
         row = await cursor.fetchone()
         return row[0] if row else None
 
+    async def get_by_source_url(self, url: str) -> dict | None:
+        cursor = await self._db.execute(
+            "SELECT id, knowledge_base_id, title, path, filename, version, highlights "
+            "FROM documents "
+            "WHERE status != 'failed' "
+            "AND json_extract(metadata, '$.source_url') = ? "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (url,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        result = _row_to_dict(cursor, row)
+        result["highlights"] = self._parse_highlights(result.get("highlights"))
+        return result
+
+    async def get_highlights(self, doc_id: str) -> dict | None:
+        cursor = await self._db.execute(
+            "SELECT id, version, highlights FROM documents WHERE id = ?", (doc_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        result = _row_to_dict(cursor, row)
+        result["highlights"] = self._parse_highlights(result.get("highlights"))
+        return result
+
+    async def replace_highlights(
+        self, doc_id: str, user_id: str, highlights: list[dict],
+        expected_version: int | None = None,
+    ) -> dict | None:
+        payload = json.dumps(highlights)
+        if expected_version is None:
+            cursor = await self._db.execute(
+                "UPDATE documents SET highlights = ?, "
+                "version = version + 1, updated_at = datetime('now') "
+                "WHERE id = ? "
+                "RETURNING id, version, highlights",
+                (payload, doc_id),
+            )
+        else:
+            cursor = await self._db.execute(
+                "UPDATE documents SET highlights = ?, "
+                "version = version + 1, updated_at = datetime('now') "
+                "WHERE id = ? AND version = ? "
+                "RETURNING id, version, highlights",
+                (payload, doc_id, expected_version),
+            )
+        row = await cursor.fetchone()
+        await self._db.commit()
+        if not row:
+            if expected_version is not None:
+                check = await self._db.execute("SELECT 1 FROM documents WHERE id = ?", (doc_id,))
+                exists = await check.fetchone()
+                if exists:
+                    return {"conflict": True}
+            return None
+        result = _row_to_dict(cursor, row)
+        result["highlights"] = self._parse_highlights(result.get("highlights"))
+        return result
+
+    async def upsert_highlight(
+        self, doc_id: str, user_id: str, highlight: dict,
+        expected_version: int | None = None,
+    ) -> dict | None:
+        """Atomic single-entry upsert by id. SQLite is single-writer so the
+        read-modify-write is safe under WAL with a transaction."""
+        new_id = highlight.get("id")
+        if not new_id:
+            return None
+
+        cursor = await self._db.execute(
+            "SELECT version, highlights FROM documents WHERE id = ?", (doc_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        version, highlights_raw = row[0], row[1]
+        if expected_version is not None and version != expected_version:
+            return {"conflict": True}
+
+        current = self._parse_highlights(highlights_raw)
+        replaced = False
+        next_list: list[dict] = []
+        for h in current:
+            if isinstance(h, dict) and h.get("id") == new_id:
+                next_list.append(highlight)
+                replaced = True
+            else:
+                next_list.append(h)
+        if not replaced:
+            if len(current) >= 500:
+                # Surface as a sentinel so the service layer can map to 413.
+                return {"limit_exceeded": True}
+            next_list.append(highlight)
+
+        payload = json.dumps(next_list)
+        cursor = await self._db.execute(
+            "UPDATE documents SET highlights = ?, "
+            "version = version + 1, updated_at = datetime('now') "
+            "WHERE id = ? "
+            "RETURNING id, version, highlights",
+            (payload, doc_id),
+        )
+        result_row = await cursor.fetchone()
+        await self._db.commit()
+        if not result_row:
+            return None
+        result = _row_to_dict(cursor, result_row)
+        result["highlights"] = self._parse_highlights(result.get("highlights"))
+        return result
+
+    async def delete_highlight(
+        self, doc_id: str, user_id: str, highlight_id: str,
+        expected_version: int | None = None,
+    ) -> dict | None:
+        cursor = await self._db.execute(
+            "SELECT version, highlights FROM documents WHERE id = ?", (doc_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        version, highlights_raw = row[0], row[1]
+        if expected_version is not None and version != expected_version:
+            return {"conflict": True}
+
+        current = self._parse_highlights(highlights_raw)
+        next_list = [
+            h for h in current
+            if not (isinstance(h, dict) and h.get("id") == highlight_id)
+        ]
+        if len(next_list) == len(current):
+            # Idempotent no-op.
+            return {"id": doc_id, "version": version, "highlights": current}
+
+        payload = json.dumps(next_list)
+        cursor = await self._db.execute(
+            "UPDATE documents SET highlights = ?, "
+            "version = version + 1, updated_at = datetime('now') "
+            "WHERE id = ? "
+            "RETURNING id, version, highlights",
+            (payload, doc_id),
+        )
+        result_row = await cursor.fetchone()
+        await self._db.commit()
+        if not result_row:
+            return None
+        result = _row_to_dict(cursor, result_row)
+        result["highlights"] = self._parse_highlights(result.get("highlights"))
+        return result
+
+    async def set_metadata_field(self, doc_id: str, key: str, value) -> None:
+        cursor = await self._db.execute(
+            "SELECT metadata FROM documents WHERE id = ?", (doc_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return
+        meta = {}
+        if row[0]:
+            try:
+                meta = json.loads(row[0]) or {}
+            except (json.JSONDecodeError, TypeError):
+                meta = {}
+        meta[key] = value
+        await self._db.execute(
+            "UPDATE documents SET metadata = ?, updated_at = datetime('now') WHERE id = ?",
+            (json.dumps(meta), doc_id),
+        )
+        await self._db.commit()
+
+    @staticmethod
+    def _parse_highlights(value):
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return value
+        try:
+            parsed = json.loads(value)
+        except (TypeError, ValueError):
+            return []
+        return parsed if isinstance(parsed, list) else []
+
     async def update_status(self, doc_id: str, status: str, **fields) -> None:
         updates = ["status = ?"]
         params = [status]

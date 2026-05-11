@@ -119,6 +119,10 @@ CREATE TABLE document_chunks (
 );
 
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS stale_since TIMESTAMPTZ;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS highlights JSONB NOT NULL DEFAULT '[]'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_documents_source_url
+    ON documents (user_id, (metadata->>'source_url'))
+    WHERE metadata ? 'source_url' AND NOT archived;
 
 CREATE TABLE document_references (
     id UUID DEFAULT gen_random_uuid() PRIMARY KEY,

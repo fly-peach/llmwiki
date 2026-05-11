@@ -53,7 +53,34 @@ class DocumentService(ABC):
     async def create_note(self, kb_id: str, filename: str, path: str, content: str) -> dict: ...
 
     @abstractmethod
-    async def create_web_clip(self, kb_id: str, url: str, title: str, html: str) -> dict: ...
+    async def create_web_clip(
+        self, kb_id: str, url: str, title: str, html: str,
+        highlights: list[dict] | None = None,
+    ) -> dict: ...
+
+    @abstractmethod
+    async def get_by_source_url(self, url: str) -> dict | None: ...
+
+    @abstractmethod
+    async def get_highlights(self, doc_id: str) -> dict | None: ...
+
+    @abstractmethod
+    async def replace_highlights(
+        self, doc_id: str, highlights: list[dict],
+        expected_version: int | None = None,
+    ) -> dict | None: ...
+
+    @abstractmethod
+    async def upsert_highlight(
+        self, doc_id: str, highlight: dict,
+        expected_version: int | None = None,
+    ) -> dict | None: ...
+
+    @abstractmethod
+    async def delete_highlight(
+        self, doc_id: str, highlight_id: str,
+        expected_version: int | None = None,
+    ) -> dict | None: ...
 
     @abstractmethod
     async def update_content(self, doc_id: str, content: str) -> dict | None: ...
