@@ -16,14 +16,17 @@ _WIKI_LINK_RE = re.compile(r"(?<!!)\[(?:[^\]]*)\]\(([^)]+)\)")
 def parse_citation_filename(raw: str) -> tuple[str, int | None]:
     """Extract filename and optional page from a citation like 'paper.pdf, p.3'."""
     raw = raw.strip().lstrip("*").rstrip("*")
-    link_match = re.match(r"\[([^\]]+)\]\([^)]*\)", raw)
+    link_match = re.match(r"\[([^\]]+)\]\([^)]*\)(.*)$", raw)
     if link_match:
-        raw = link_match.group(1)
-    parts = re.match(r"^(.+?)(?:,\s*p\.?\s*(\d+))?(?:\s*[-–—].*)?$", raw)
-    if not parts:
-        return raw, None
-    filename = parts.group(1).strip()
-    page = int(parts.group(2)) if parts.group(2) else None
+        raw = f"{link_match.group(1)}{link_match.group(2)}"
+    raw = re.split(r"\s+[-–—]\s+", raw, maxsplit=1)[0].strip()
+    page_match = re.search(r",\s*p\.?\s*(\d+)\b", raw)
+    if page_match:
+        filename = raw[:page_match.start()].strip()
+        page = int(page_match.group(1))
+    else:
+        filename = raw
+        page = None
     return filename, page
 
 

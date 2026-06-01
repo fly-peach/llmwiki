@@ -1,6 +1,8 @@
 """Supavault MCP Server — knowledge vault tools for Claude."""
 
+import importlib.util
 import os
+from pathlib import Path
 
 import logfire
 import sentry_sdk
@@ -15,9 +17,24 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
 from auth import SupabaseTokenVerifier
-from config import settings
 from tools import register
 from vaultfs import PostgresVaultFS
+
+
+def _load_local_settings():
+    """Load mcp/config.py even when another top-level `config` is cached."""
+    spec = importlib.util.spec_from_file_location(
+        "llmwiki_mcp_config",
+        Path(__file__).with_name("config.py"),
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load MCP config")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.settings
+
+
+settings = _load_local_settings()
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(
@@ -31,7 +48,19 @@ if settings.LOGFIRE_TOKEN:
     logfire.configure(token=settings.LOGFIRE_TOKEN, service_name="supavault-mcp")
     logfire.instrument_asyncpg()
 
-_mcp_host = urlparse(settings.MCP_URL).hostname or "localhost"
+def _build_allowed_hosts(mcp_url: str) -> list[str]:
+    """Build the allowed_hosts list for TransportSecuritySettings.
+
+    Returns both the bare hostname and the ``host:*`` port-wildcard form so
+    that requests reaching the MCP server inside a container network — where
+    the Host header includes the internal port (e.g. ``llmwiki-mcp:8080``) —
+    are not rejected as 421 Misdirected Request. External requests routed
+    through a reverse proxy on ports 80/443 present a port-less Host header
+    and are matched by the bare entry, so this is backwards compatible.
+    """
+    host = urlparse(mcp_url).hostname or "localhost"
+    return [host, f"{host}:*"]
+
 
 mcp = FastMCP(
     "LLM Wiki",
@@ -49,7 +78,7 @@ mcp = FastMCP(
     ),
     transport_security=TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
-        allowed_hosts=[_mcp_host],
+        allowed_hosts=_build_allowed_hosts(settings.MCP_URL),
     ),
 )
 

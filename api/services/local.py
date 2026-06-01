@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import uuid
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -11,8 +12,9 @@ from config import settings
 from domain.watcher import mark_written
 from infra.db.sqlite import SQLiteDocumentRepository, SQLiteChunkRepository
 from services.chunker import chunk_text
+from services.webclip_assets import materialize_webclip_assets
 from .base import UserService, KBService, DocumentService, ServiceFactory
-from .types import parse_frontmatter, title_from_filename, extract_tags
+from .parsers import parse_frontmatter, title_from_filename, extract_tags
 
 
 class LocalUserService(UserService):
@@ -59,7 +61,7 @@ class LocalKBService(KBService):
         cursor = await self.db.execute(
             "SELECT w.id, w.user_id, w.name, w.name as slug, w.description, "
             "w.created_at, w.created_at as updated_at, "
-            "(SELECT count(*) FROM documents WHERE source_kind != 'wiki' AND status != 'failed') as source_count, "
+            "(SELECT count(*) FROM documents WHERE source_kind = 'source' AND status != 'failed') as source_count, "
             "(SELECT count(*) FROM documents WHERE source_kind = 'wiki' AND status != 'failed') as wiki_page_count "
             "FROM workspace w",
         )
@@ -93,6 +95,15 @@ class LocalKBService(KBService):
         await self.db.commit()
         return await self.get(kb_id)
 
+    async def update_sharing(
+        self, kb_id: str, visibility: str, public_slug: str | None,
+    ) -> dict | None:
+        raise HTTPException(
+            status_code=400,
+            detail="Wiki sharing isn't available in local mode. Run the hosted "
+            "version (or use llmwiki.app) to publish a wiki.",
+        )
+
     async def delete(self, kb_id: str) -> bool:
         raise HTTPException(status_code=400, detail="Cannot delete the workspace in local mode")
 
@@ -114,6 +125,27 @@ def _doc_to_disk_path(doc: dict) -> Path | None:
     ws = _workspace_root()
     resolved = (ws / relative).resolve()
     return resolved if resolved.is_relative_to(ws) else None
+
+
+_WEBCLIP_ROOT = "/webclipper/"
+
+
+def _normalize_webclip_path(path: str | None) -> str:
+    missing = path is None or not path.strip()
+    raw = _WEBCLIP_ROOT if missing else path.strip()
+    if "\\" in raw or "\x00" in raw:
+        raise HTTPException(status_code=400, detail="Invalid folder path")
+    raw = "/" + raw.strip("/") + "/"
+    raw = re.sub(r"/+", "/", raw)
+    parts = [p for p in raw.split("/") if p]
+    if not parts and not missing:
+        raise HTTPException(status_code=400, detail="Web clips must be stored under /webclipper/")
+    if any(p in {".", ".."} for p in parts):
+        raise HTTPException(status_code=400, detail="Invalid folder path")
+    normalized = "/" + "/".join(parts) + "/" if parts else _WEBCLIP_ROOT
+    if normalized != _WEBCLIP_ROOT and not normalized.startswith(_WEBCLIP_ROOT):
+        raise HTTPException(status_code=400, detail="Web clips must be stored under /webclipper/")
+    return normalized
 
 
 def _merge_text_anchors(payloads: list[dict], mapped) -> list[dict]:
@@ -198,46 +230,93 @@ class LocalDocumentService(DocumentService):
 
     async def create_web_clip(
         self, kb_id: str, url: str, title: str, html: str,
-        highlights: list[dict] | None = None,
+        highlights: list[dict] | None = None, path: str = "/webclipper/",
     ) -> dict:
         from html_parser import Parser
 
+        path = _normalize_webclip_path(path)
         parser = Parser(html, url=url, content_only=True)
         result = parser.parse(highlights=highlights or [])
         markdown = result.content
 
-        filename = re.sub(r"[^\w\s\-.]", "", title.lower().replace(" ", "-"))[:80] + ".html"
-        path = "/webclipper/"
+        base_name = re.sub(r"[^\w\s\-.]", "", title.lower().replace(" ", "-"))[:80].strip("-._")
+        filename = f"{base_name or 'web-clip'}.md"
 
-        relative = f"webclipper/{filename}"
+        relative_dir = path.strip("/")
+        relative = f"{relative_dir}/{filename}" if relative_dir else filename
         file_path = _safe_resolve(relative)
         if file_path.exists():
             base = filename.rsplit(".", 1)[0]
             for i in range(2, 100):
-                candidate = f"{base}-{i}.html"
-                candidate_path = _safe_resolve(f"webclipper/{candidate}")
+                candidate = f"{base}-{i}.md"
+                candidate_relative = f"{relative_dir}/{candidate}" if relative_dir else candidate
+                candidate_path = _safe_resolve(candidate_relative)
                 if not candidate_path.exists():
                     filename = candidate
                     file_path = candidate_path
                     break
 
+        stem = filename.rsplit(".", 1)[0]
+        asset_dir_name = f"{stem}.assets"
+        markdown, assets = await materialize_webclip_assets(markdown, result.images, asset_dir_name)
+
         file_path.parent.mkdir(parents=True, exist_ok=True)
         mark_written(str(file_path))
         file_path.write_text(markdown or "", encoding="utf-8")
 
-        row = await self.doc_repo.create_note(kb_id, self.user_id, filename, path, title, markdown, [])
+        try:
+            row = await self.doc_repo.create_note(kb_id, self.user_id, filename, path, title, markdown, [])
+        except Exception:
+            file_path.unlink(missing_ok=True)
+            raise
 
-        if highlights:
-            enriched = _merge_text_anchors(highlights, result.highlights)
-            await self.doc_repo.replace_highlights(str(row["id"]), self.user_id, enriched)
+        parent_id = str(row["id"])
+        asset_metadata: list[dict] = []
+        for asset in assets:
+            asset_id = str(uuid.uuid4())
+            asset.document_id = asset_id
+            asset_path = f"{path}{asset_dir_name}/"
+            relative_asset = f"{relative_dir}/{asset.src}" if relative_dir else asset.src
+            local_asset = _safe_resolve(relative_asset)
+            local_asset.parent.mkdir(parents=True, exist_ok=True)
+            mark_written(str(local_asset))
+            local_asset.write_bytes(asset.data)
+            await self.doc_repo.create_asset(
+                asset_id,
+                self.user_id,
+                asset.filename,
+                asset_path,
+                asset.filename,
+                asset.file_type,
+                len(asset.data),
+                {
+                    "asset": True,
+                    "hidden": True,
+                    "parent_document_id": parent_id,
+                    "source_url": url,
+                    **asset.metadata(),
+                },
+            )
+            asset_metadata.append(asset.metadata())
 
-        await self.doc_repo.set_metadata_field(str(row["id"]), "source_url", url)
+        await self.doc_repo.set_metadata_field(parent_id, "source_url", url)
+        await self.doc_repo.set_metadata_field(parent_id, "clip_kind", "web")
+        if asset_metadata:
+            await self.doc_repo.set_metadata_field(parent_id, "assets", asset_metadata)
 
         if markdown:
             chunks = chunk_text(markdown)
-            await self.chunk_repo.store(str(row["id"]), self.user_id, kb_id, chunks)
+            await self.chunk_repo.store(parent_id, self.user_id, kb_id, chunks)
 
-        return row
+        # replace_highlights AFTER chunks exist so the repo-level
+        # _recompute_chunks_for_doc can materialize annotations onto the
+        # freshly-created chunks. Running it before chunks exist would be a
+        # no-op materialization.
+        if highlights:
+            enriched = _merge_text_anchors(highlights, result.highlights)
+            await self.doc_repo.replace_highlights(parent_id, self.user_id, enriched)
+
+        return await self.doc_repo.get(parent_id) or row
 
     async def get_by_source_url(self, url: str) -> dict | None:
         return await self.doc_repo.get_by_source_url(url)
@@ -351,3 +430,6 @@ class LocalServiceFactory(ServiceFactory):
 
     def document_service(self, user_id: str) -> LocalDocumentService:
         return LocalDocumentService(self.db, user_id)
+
+    def public_wiki_service(self):
+        raise HTTPException(status_code=404, detail="Public wikis aren't available in local mode.")

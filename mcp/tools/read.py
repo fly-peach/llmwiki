@@ -14,6 +14,7 @@ from .references import get_backlinks_summary
 logger = logging.getLogger(__name__)
 
 MAX_BATCH_CHARS = 120_000
+MAX_INLINE_IMAGES = 12
 
 _IMG_MIME = {
     "png": "image/png",
@@ -47,6 +48,24 @@ def _clean_annotation_text(s: str, max_len: int = 600) -> str:
     return s
 
 
+def _highlight_quote_and_page(h: dict) -> tuple[str, int | None]:
+    """Return the user-selected quote and optional page for any anchor shape.
+
+    Highlights are one user-facing feature, but different capture surfaces
+    store different resolver anchors: PDF viewer (`pdfAnchor`), parsed
+    markdown viewer (`textAnchor`), and legacy webclip DOM (`anchor`).
+    """
+    for key in ("pdfAnchor", "textAnchor", "anchor"):
+        anchor = h.get(key) or {}
+        if not isinstance(anchor, dict):
+            continue
+        text = _clean_annotation_text(anchor.get("textContent") or "")
+        if text:
+            page = anchor.get("page") if key == "pdfAnchor" else None
+            return text, page
+    return "", None
+
+
 def _materialize_highlights(doc: dict) -> str:
     """Render the highlights array as a markdown appendix for LLM context."""
     raw = doc.get("highlights")
@@ -64,14 +83,9 @@ def _materialize_highlights(doc: dict) -> str:
     for h in raw:
         if not isinstance(h, dict):
             continue
-        anchor = h.get("anchor") or {}
-        pdf_anchor = h.get("pdfAnchor") or {}
-        text = _clean_annotation_text(
-            anchor.get("textContent") or pdf_anchor.get("textContent") or ""
-        )
+        text, page = _highlight_quote_and_page(h)
         if not text:
             continue
-        page = pdf_anchor.get("page")
         suffix = f" (p.{page})" if page else ""
         comment = _clean_annotation_text(h.get("comment") or "")
         line = f"- “{text}”{suffix}"
@@ -102,6 +116,28 @@ def _image(data: bytes, fmt: str) -> ImageContent:
         data=base64.b64encode(data).decode(),
         mimeType=_IMG_MIME.get(fmt, f"image/{fmt}"),
     )
+
+
+def _image_format_from_asset(asset: dict) -> str:
+    content_type = (asset.get("content_type") or "").lower()
+    if content_type.startswith("image/"):
+        fmt = content_type.split("/", 1)[1]
+        return "jpeg" if fmt == "jpg" else fmt
+    file_type = (asset.get("file_type") or "").lower()
+    if file_type:
+        return "jpeg" if file_type in {"jpg", "jpeg"} else file_type
+    filename = (asset.get("filename") or "").lower()
+    suffix = filename.rsplit(".", 1)[-1] if "." in filename else "png"
+    return "jpeg" if suffix in {"jpg", "jpeg"} else suffix
+
+
+def _asset_caption(asset: dict, index: int) -> str:
+    label = asset.get("alt") or asset.get("filename") or f"image {index}"
+    original = asset.get("original_url")
+    parts = [f"**Image {index}:** {label}"]
+    if original:
+        parts.append(f"Source: {original}")
+    return "\n".join(parts)
 
 
 def _extract_sections(content: str, section_names: list[str]) -> str:
@@ -171,7 +207,12 @@ class ReadHandler:
 
         highlights_section = _materialize_highlights(doc)
         backlinks = await get_backlinks_summary(self.fs, str(doc["id"]))
-        return header + content + highlights_section + backlinks
+        text = header + content + highlights_section + backlinks
+        if include_images:
+            image_blocks = await self._read_webclip_assets(doc)
+            if image_blocks:
+                return [_text(text), *image_blocks]
+        return text
 
     async def _read_batch(self, path: str) -> str:
         """Batch-read documents matching a glob pattern."""
@@ -302,6 +343,38 @@ class ReadHandler:
             fmt = "jpeg" if file_type in ("jpg", "jpeg") else file_type
             return [_text(header), _image(img_bytes, fmt)]
         return header + "(Image could not be loaded)"
+
+    async def _read_webclip_assets(self, doc: dict) -> list[TextContent | ImageContent]:
+        metadata = doc.get("metadata") or {}
+        if isinstance(metadata, str):
+            try:
+                metadata = json.loads(metadata)
+            except (TypeError, ValueError):
+                metadata = {}
+        assets = metadata.get("assets") if isinstance(metadata, dict) else None
+        if not isinstance(assets, list):
+            return []
+
+        blocks: list[TextContent | ImageContent] = []
+        included = 0
+        for asset in assets:
+            if included >= MAX_INLINE_IMAGES:
+                remaining = len(assets) - included
+                if remaining > 0:
+                    blocks.append(_text(f"*{remaining} additional image asset(s) omitted.*"))
+                break
+            if not isinstance(asset, dict):
+                continue
+            asset_doc_id = asset.get("document_id")
+            if not asset_doc_id:
+                continue
+            img_bytes = await self.fs.load_asset_bytes(str(asset_doc_id))
+            if not img_bytes:
+                continue
+            included += 1
+            blocks.append(_text(_asset_caption(asset, included)))
+            blocks.append(_image(img_bytes, _image_format_from_asset(asset)))
+        return blocks
 
     async def _read_batch_pages(self, doc: dict, remaining: int) -> tuple[str, int, int, bool]:
         """Read pages within a char budget. Returns (text, chars, pages_included, truncated)."""

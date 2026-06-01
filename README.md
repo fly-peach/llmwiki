@@ -36,11 +36,13 @@ cd web && npm install && cd ..
 # Initialize a workspace (point at any folder with your files)
 ./llmwiki init ~/research
 
-# Start the app
+# Start API + web UI
 ./llmwiki serve ~/research
 ```
 
 Open [localhost:3000](http://localhost:3000). Your files are indexed, wiki is scaffolded, ready to go.
+
+> If `./llmwiki init` errors out on a fresh checkout, first make sure you're up to date with `master` and try again. If it still fails, open an issue with the full output; local setup gets fewer reports, so there may be undocumented edge cases.
 
 ### Connect Claude
 
@@ -51,6 +53,20 @@ Open [localhost:3000](http://localhost:3000). Your files are indexed, wiki is sc
 This prints a JSON snippet for `claude_desktop_config.json` (Claude Desktop) or `.claude/settings.json` (Claude Code). One workspace runs as one MCP server entry, so if you have multiple research folders, add one entry per folder.
 
 Then tell Claude: *"Read the guide, then ingest my sources and start building the wiki."*
+
+### Using with non-Claude clients
+
+LLM Wiki is an MCP server, so any MCP-capable client works — not just Claude Desktop / Code. The server-side tools (`guide`, `search`, `read`, `create`, `edit`, `append`, `delete`) are the same across clients; agent quality is up to whichever client/model is at the other end.
+
+Useful options for offline / corporate-firewall / local-model setups:
+
+- **opencode** — open-source coding agent with MCP support. Runs against Ollama, vLLM, or any OpenAI-compatible local endpoint.
+- **continue.dev** — VS Code / JetBrains extension with MCP (Agent mode) and Ollama support.
+- **Cursor** and **Cline** — IDE-based clients with MCP support.
+
+Point your client's MCP config at the same `llmwiki mcp <workspace>` command you'd use for Claude (see `llmwiki mcp-config` output). Multiple clients can point at the same workspace, but avoid simultaneous writes to the same page — there's no cross-process write lock, so concurrent edits can lose updates.
+
+Local models need reliable tool/function calling — most Llama / Qwen-class models can do this, but quality varies a lot by model, context length, and client configuration. The `guide` tool is your friend: have the client call it first so the model gets the workspace structure and conventions before it starts writing.
 
 ### One-command start
 
@@ -104,7 +120,9 @@ Once connected, Claude has these tools:
 | `guide` | Explains how the wiki works, lists what's in the workspace |
 | `search` | Browse files (`list`) or full-text search (`search`) |
 | `read` | Read documents — PDFs with page ranges, glob batch reads |
-| `write` | Create wiki pages, edit with `str_replace`, append. SVG/CSV assets |
+| `create` | Create a new wiki page or asset (markdown, SVG, CSV, JSON, XML, HTML) |
+| `edit` | Edit an existing page via `str_replace` |
+| `append` | Append content to the end of an existing page |
 | `delete` | Delete documents by path or glob pattern |
 
 All writes go to disk first, then update the search index. If Claude creates `/wiki/concepts/attention.md`, that file appears on disk immediately.

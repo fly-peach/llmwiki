@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter, usePathname } from 'next/navigation'
 import { AppShell } from '@/components/layout/AppShell'
 import { AuthProvider } from '@/components/auth/AuthProvider'
+import { withAuthTimeout } from '@/lib/auth-errors'
 
 const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
 
@@ -24,23 +25,46 @@ function HostedDashboard({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const [user, setUser] = useState<{ id: string; email: string } | null>(null)
   const [loading, setLoading] = useState(true)
+  const pathnameRef = useRef(pathname)
 
   useEffect(() => {
-    import('@/lib/supabase/client').then(({ createClient }) => {
+    pathnameRef.current = pathname
+  }, [pathname])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const bounceToLogin = async () => {
+      try {
+        const { createClient } = await import('@/lib/supabase/client')
+        await createClient().auth.signOut()
+      } catch { /* signOut best-effort */ }
+      const currentPath = pathnameRef.current
+      const returnTo = currentPath !== '/wikis' ? `?returnTo=${encodeURIComponent(currentPath)}` : ''
+      if (!cancelled) router.replace(`/login${returnTo}`)
+    }
+
+    import('@/lib/supabase/client').then(async ({ createClient }) => {
+      if (cancelled) return
       const supabase = createClient()
-      supabase.auth.getUser().then(({ data: { user: authUser } }) => {
+      try {
+        const { data: { user: authUser } } = await withAuthTimeout(supabase.auth.getUser())
+        if (cancelled) return
         if (!authUser) {
-          const returnTo = pathname !== '/wikis' ? `?returnTo=${encodeURIComponent(pathname)}` : ''
-          router.replace(`/login${returnTo}`)
+          await bounceToLogin()
           return
         }
         setUser({ id: authUser.id, email: authUser.email! })
         setLoading(false)
-      })
+      } catch {
+        await bounceToLogin()
+      }
     }).catch(() => {
-      router.replace('/login')
+      bounceToLogin()
     })
-  }, [router, pathname])
+
+    return () => { cancelled = true }
+  }, [router])
 
   if (loading) return null
 

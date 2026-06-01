@@ -39,9 +39,52 @@ class TestReadIsolation:
         assert resp.status_code == 200
         assert resp.json() == []
 
+    async def test_list_documents_hides_asset_documents(self, client, pool):
+        await pool.execute(
+            "INSERT INTO documents (id, knowledge_base_id, user_id, filename, title, path, "
+            "file_type, status, content, metadata) "
+            "VALUES ('aaaa5555-aaaa-aaaa-aaaa-aaaaaaaaaaaa', $1, $2, 'image-01.png', "
+            "'image-01.png', '/webclipper/article.assets/', 'png', 'ready', NULL, "
+            "'{\"asset\": true, \"hidden\": true}'::jsonb)",
+            KB_A_ID, USER_A_ID,
+        )
+        resp = await client.get(
+            f"/v1/knowledge-bases/{KB_A_ID}/documents",
+            headers=auth_headers(USER_A_ID),
+        )
+        assert resp.status_code == 200
+        filenames = {doc["filename"] for doc in resp.json()}
+        assert "notes.md" in filenames
+        assert "image-01.png" not in filenames
+
     async def test_get_document_cross_tenant_returns_404(self, client):
         resp = await client.get(f"/v1/documents/{DOC_B_ID}", headers=auth_headers(USER_A_ID))
         assert resp.status_code == 404
+
+    async def test_get_document_by_url_ignores_asset_documents(self, client, pool):
+        source_url = "https://example.com/article"
+        await pool.execute(
+            "UPDATE documents SET metadata = $1::jsonb WHERE id = $2",
+            '{"source_url": "https://example.com/article", "clip_kind": "web"}',
+            DOC_A_ID,
+        )
+        await pool.execute(
+            "INSERT INTO documents (id, knowledge_base_id, user_id, filename, title, path, "
+            "file_type, status, content, metadata, updated_at) "
+            "VALUES ('aaaa6666-aaaa-aaaa-aaaa-aaaaaaaaaaaa', $1, $2, 'image-01.png', "
+            "'image-01.png', '/webclipper/article.assets/', 'png', 'ready', NULL, "
+            "$3::jsonb, now() + interval '1 second')",
+            KB_A_ID, USER_A_ID,
+            '{"asset": true, "hidden": true, "source_url": "https://example.com/article"}',
+        )
+
+        resp = await client.get(
+            "/v1/documents/by-url",
+            headers=auth_headers(USER_A_ID),
+            params={"url": source_url},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["id"] == DOC_A_ID
 
     async def test_get_document_content_cross_tenant_returns_404(self, client):
         resp = await client.get(f"/v1/documents/{DOC_B_ID}/content", headers=auth_headers(USER_A_ID))
@@ -75,6 +118,40 @@ class TestWriteIsolation:
             json={"filename": "injected.md", "content": "pwned"},
         )
         assert resp.status_code == 404
+
+    async def test_create_webclip_in_other_kb_returns_404(self, client):
+        resp = await client.post(
+            f"/v1/knowledge-bases/{KB_B_ID}/documents/web",
+            headers=auth_headers(USER_A_ID),
+            json={
+                "url": "https://example.com/bob",
+                "title": "Injected",
+                "html": "<article><p>pwned</p></article>",
+                "path": "/webclipper/",
+            },
+        )
+        assert resp.status_code == 404
+
+    async def test_create_webclip_in_other_kb_does_not_insert(self, client, pool):
+        before = await pool.fetchval(
+            "SELECT COUNT(*) FROM documents WHERE knowledge_base_id = $1",
+            KB_B_ID,
+        )
+        await client.post(
+            f"/v1/knowledge-bases/{KB_B_ID}/documents/web",
+            headers=auth_headers(USER_A_ID),
+            json={
+                "url": "https://example.com/bob",
+                "title": "Injected",
+                "html": "<article><p>pwned</p></article>",
+                "path": "/webclipper/research/",
+            },
+        )
+        after = await pool.fetchval(
+            "SELECT COUNT(*) FROM documents WHERE knowledge_base_id = $1",
+            KB_B_ID,
+        )
+        assert after == before
 
     async def test_update_content_cross_tenant_returns_404(self, client):
         resp = await client.put(
@@ -145,7 +222,8 @@ class TestWriteIsolation:
 
 class TestHighlightIsolation:
     """Granular highlight + move isolation. New endpoints added in V2:
-    POST /v1/documents/{id}/highlights, DELETE /v1/documents/{id}/highlights/{hid},
+    POST/PATCH /v1/documents/{id}/highlights,
+    DELETE /v1/documents/{id}/highlights/{hid},
     PATCH /v1/documents/{id} body knowledge_base_id."""
 
     async def _seed_highlight(self, pool, doc_id, hid="seed-1"):
@@ -193,6 +271,30 @@ class TestHighlightIsolation:
             headers=auth_headers(USER_A_ID),
         )
         assert resp.status_code == 404
+
+    async def test_replace_highlights_cross_tenant_returns_404(self, client):
+        resp = await client.patch(
+            f"/v1/documents/{DOC_B_ID}/highlights",
+            headers=auth_headers(USER_A_ID),
+            json={"highlights": [self._new_highlight()]},
+        )
+        assert resp.status_code == 404
+
+    async def test_replace_highlights_cross_tenant_does_not_modify(self, client, pool):
+        await self._seed_highlight(pool, DOC_B_ID, hid="bob-keep")
+        await client.patch(
+            f"/v1/documents/{DOC_B_ID}/highlights",
+            headers=auth_headers(USER_A_ID),
+            json={"highlights": [self._new_highlight()]},
+        )
+        row = await pool.fetchrow(
+            "SELECT highlights FROM documents WHERE id = $1", DOC_B_ID,
+        )
+        import json
+        highlights = row["highlights"]
+        if isinstance(highlights, str):
+            highlights = json.loads(highlights)
+        assert [h.get("id") for h in highlights] == ["bob-keep"]
 
     async def test_upsert_highlight_cross_tenant_returns_404(self, client):
         resp = await client.post(

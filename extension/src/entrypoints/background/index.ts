@@ -1,10 +1,15 @@
 import { getSupabase } from "@/lib/supabase";
+import { getApiUrl } from "@/lib/settings";
+import { isAllowedApiFetchUrl, isSupportedRemoteResourceUrl } from "@/lib/security";
+import type { AuthChangeEvent, Session } from "@supabase/auth-js";
 
 type Message =
   | { type: "SIGN_IN_WITH_GOOGLE" }
+  | { type: "SIGN_IN_WITH_PASSWORD"; email: string; password: string }
   | { type: "SIGN_OUT" }
   | { type: "GET_SESSION" }
   | { type: "DOWNLOAD_PDF"; url: string }
+  | { type: "FETCH_IMAGE_DATA_URL"; url: string; maxBytes?: number }
   | {
       type: "API_FETCH";
       url: string;
@@ -24,7 +29,7 @@ export default defineBackground(() => {
   const supabase = getSupabase();
 
   // Keep session fresh across service worker restarts
-  supabase.auth.onAuthStateChange((event, _session) => {
+  supabase.auth.onAuthStateChange((event: AuthChangeEvent, _session: Session | null) => {
     console.log("[bg] auth:", event);
   });
 
@@ -39,12 +44,16 @@ export default defineBackground(() => {
     switch (msg.type) {
       case "SIGN_IN_WITH_GOOGLE":
         return signInWithGoogle();
+      case "SIGN_IN_WITH_PASSWORD":
+        return signInWithPassword(msg.email, msg.password);
       case "SIGN_OUT":
         return signOut();
       case "GET_SESSION":
         return getSession();
       case "DOWNLOAD_PDF":
         return downloadPdf(msg.url);
+      case "FETCH_IMAGE_DATA_URL":
+        return fetchImageDataUrl(msg.url, msg.maxBytes);
       case "API_FETCH":
         return apiFetchProxy(msg);
       default:
@@ -69,6 +78,9 @@ export default defineBackground(() => {
     },
   ): Promise<ApiFetchResponse> {
     try {
+      if (!isAllowedApiFetchUrl(msg.url, await getApiUrl())) {
+        return { ok: false, status: 403, error: "Blocked extension fetch target" };
+      }
       const res = await fetch(msg.url, {
         method: msg.method ?? "GET",
         headers: msg.headers,
@@ -175,6 +187,25 @@ export default defineBackground(() => {
     }
   }
 
+  async function signInWithPassword(
+    email: string,
+    password: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    try {
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (error) {
+        return { success: false, error: error.message };
+      }
+      return { success: true };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Sign in failed";
+      return { success: false, error: message };
+    }
+  }
+
   async function signOut() {
     await supabase.auth.signOut();
     return { success: true };
@@ -225,6 +256,50 @@ export default defineBackground(() => {
     } catch (err: unknown) {
       const message =
         err instanceof Error ? err.message : "PDF download failed";
+      return { error: message };
+    }
+  }
+
+  async function fetchImageDataUrl(
+    url: string,
+    maxBytes = 2_500_000,
+  ): Promise<{ dataUrl: string; size: number; mimeType: string } | { error: string }> {
+    try {
+      if (!isSupportedRemoteResourceUrl(url)) {
+        return { error: "Unsupported image URL" };
+      }
+      const response = await fetch(url, {
+        credentials: "include",
+        cache: "force-cache",
+      });
+      if (!response.ok) {
+        return { error: `Image fetch failed: ${response.status}` };
+      }
+
+      const mimeType = (response.headers.get("content-type") || "").split(";", 1)[0].toLowerCase();
+      if (!["image/jpeg", "image/png", "image/gif", "image/webp", "image/avif"].includes(mimeType)) {
+        return { error: `Unsupported image type: ${mimeType || "unknown"}` };
+      }
+
+      const buffer = await response.arrayBuffer();
+      if (buffer.byteLength > maxBytes) {
+        return { error: `Image too large: ${buffer.byteLength}` };
+      }
+
+      const bytes = new Uint8Array(buffer);
+      let binary = "";
+      const chunkSize = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+      }
+
+      return {
+        dataUrl: `data:${mimeType};base64,${btoa(binary)}`,
+        size: buffer.byteLength,
+        mimeType,
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Image fetch failed";
       return { error: message };
     }
   }

@@ -52,7 +52,7 @@ class PostgresVaultFS(VaultFS):
         return await scoped_queryrow(
             self.user_id,
             "SELECT id, user_id, filename, title, path, content, tags, version, file_type, "
-            "page_count, highlights, created_at, updated_at "
+            "page_count, highlights, metadata, date, created_at, updated_at "
             "FROM documents WHERE knowledge_base_id = $1 AND filename = $2 AND path = $3 AND NOT archived AND user_id = $4",
             kb_id, filename, dir_path, self.user_id,
         )
@@ -61,7 +61,7 @@ class PostgresVaultFS(VaultFS):
         return await scoped_queryrow(
             self.user_id,
             "SELECT id, user_id, filename, title, path, content, tags, version, file_type, "
-            "page_count, highlights, created_at, updated_at "
+            "page_count, highlights, metadata, date, created_at, updated_at "
             "FROM documents WHERE knowledge_base_id = $1 AND (filename = $2 OR title = $2) AND NOT archived AND user_id = $3",
             kb_id, name, self.user_id,
         )
@@ -144,8 +144,9 @@ class PostgresVaultFS(VaultFS):
     async def list_documents(self, kb_id: str) -> list[dict]:
         return await scoped_query(
             self.user_id,
-            "SELECT id, filename, title, path, file_type, tags, page_count, updated_at "
+            "SELECT id, filename, title, path, file_type, tags, page_count, date, updated_at "
             "FROM documents WHERE knowledge_base_id = $1 AND NOT archived AND user_id = $2 "
+            "AND COALESCE(metadata->>'asset', 'false') <> 'true' "
             "ORDER BY path, filename",
             kb_id, self.user_id,
         )
@@ -153,8 +154,9 @@ class PostgresVaultFS(VaultFS):
     async def list_documents_with_content(self, kb_id: str) -> list[dict]:
         return await scoped_query(
             self.user_id,
-            "SELECT id, filename, title, path, content, tags, file_type, page_count, highlights "
+            "SELECT id, filename, title, path, content, tags, file_type, page_count, highlights, metadata, date "
             "FROM documents WHERE knowledge_base_id = $1 AND NOT archived AND user_id = $2 "
+            "AND COALESCE(metadata->>'asset', 'false') <> 'true' "
             "ORDER BY path, filename",
             kb_id, self.user_id,
         )
@@ -177,16 +179,43 @@ class PostgresVaultFS(VaultFS):
         )
 
 
-    async def search_chunks(self, kb_id: str, query: str, limit: int, path_filter: str | None = None) -> list[dict]:
+    async def search_chunks(
+        self, kb_id: str, query: str, limit: int,
+        path_filter: str | None = None,
+        annotated_only: bool = False,
+        scope: str = "all",
+    ) -> list[dict]:
         path_clause = ""
         if path_filter == "wiki":
             path_clause = " AND d.path LIKE '/wiki/%%'"
         elif path_filter == "sources":
             path_clause = " AND d.path NOT LIKE '/wiki/%%'"
 
-        return await scoped_query(
+        # Always match against `content` — that's where the PGroonga index
+        # lives, and `content` already contains source + annotations
+        # materialized together. The per-side booleans below label *which
+        # side* matched so callers can post-filter by scope cheaply.
+        annotated_clause = " AND dc.has_highlight = true" if annotated_only else ""
+
+        # Push scope into SQL so the LIMIT counts only rows the user asked
+        # for. The earlier Python-side post-filter could return zero results
+        # for narrow scopes even when valid matches existed past the top-N.
+        if scope == "annotations":
+            scope_clause = (
+                " AND dc.annotations_text IS NOT NULL "
+                " AND dc.annotations_text &@~ $2"
+            )
+        elif scope == "source":
+            scope_clause = " AND dc.source_content &@~ $2"
+        else:
+            scope_clause = ""
+
+        rows = await scoped_query(
             self.user_id,
-            f"SELECT dc.content, dc.page, dc.header_breadcrumb, dc.chunk_index, "
+            f"SELECT dc.content, dc.source_content, dc.annotations_text, "
+            f"  dc.has_highlight, dc.page, dc.header_breadcrumb, dc.chunk_index, "
+            f"  (dc.source_content &@~ $2) AS source_hit, "
+            f"  (dc.annotations_text IS NOT NULL AND dc.annotations_text &@~ $2) AS annotation_hit, "
             f"  d.filename, d.title, d.path, d.file_type, d.tags, "
             f"  pgroonga_score(dc.tableoid, dc.ctid) AS score "
             f"FROM document_chunks dc "
@@ -195,11 +224,14 @@ class PostgresVaultFS(VaultFS):
             f"  AND dc.content &@~ $2 "
             f"  AND NOT d.archived"
             f"  AND d.user_id = $3"
+            f"{annotated_clause}"
+            f"{scope_clause}"
             f"{path_clause} "
             f"ORDER BY score DESC, dc.chunk_index "
             f"LIMIT $4",
             kb_id, query, self.user_id, limit,
         )
+        return rows
 
 
     async def load_source_bytes(self, doc: dict) -> bytes | None:
@@ -210,6 +242,17 @@ class PostgresVaultFS(VaultFS):
     async def load_image_bytes(self, doc_id: str, image_id: str) -> bytes | None:
         s3_key = f"{self.user_id}/{doc_id}/images/{image_id}"
         return await self._load_s3(s3_key)
+
+    async def load_asset_bytes(self, asset_doc_id: str) -> bytes | None:
+        row = await scoped_queryrow(
+            self.user_id,
+            "SELECT id, user_id, filename, file_type FROM documents "
+            "WHERE id = $1 AND user_id = $2 AND NOT archived",
+            asset_doc_id, self.user_id,
+        )
+        if not row:
+            return None
+        return await self.load_source_bytes(dict(row))
 
     async def _load_s3(self, key: str) -> bytes | None:
         session = _get_s3_session()
@@ -276,7 +319,7 @@ class PostgresVaultFS(VaultFS):
     async def get_forward_references(self, doc_id: str) -> list[dict]:
         return await scoped_query(
             self.user_id,
-            "SELECT d.filename, d.title, d.path, dr.reference_type, dr.page "
+            "SELECT d.id, d.filename, d.title, d.path, dr.reference_type, dr.page "
             "FROM document_references dr "
             "JOIN documents d ON dr.target_document_id = d.id "
             "WHERE dr.source_document_id = $1 AND NOT d.archived AND d.user_id = $2 "

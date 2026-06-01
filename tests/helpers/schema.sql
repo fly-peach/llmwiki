@@ -109,7 +109,11 @@ CREATE TABLE document_chunks (
     user_id UUID NOT NULL REFERENCES users(id),
     knowledge_base_id UUID NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
     chunk_index INTEGER NOT NULL,
-    content TEXT NOT NULL CHECK (length(content) <= 10000),
+    -- `content` is the materialized form (source + annotations) used by FTS.
+    content TEXT NOT NULL,
+    source_content TEXT NOT NULL DEFAULT '' CHECK (length(source_content) <= 10000),
+    annotations_text TEXT,
+    has_highlight BOOLEAN NOT NULL DEFAULT false,
     page INTEGER,
     start_char INTEGER,
     token_count INTEGER NOT NULL,
@@ -117,6 +121,8 @@ CREATE TABLE document_chunks (
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     UNIQUE(document_id, chunk_index)
 );
+CREATE INDEX IF NOT EXISTS idx_chunks_annotated
+    ON document_chunks(knowledge_base_id) WHERE has_highlight = true;
 
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS stale_since TIMESTAMPTZ;
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS highlights JSONB NOT NULL DEFAULT '[]'::jsonb;
@@ -349,3 +355,28 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER document_change_trigger
   AFTER INSERT OR UPDATE OR DELETE ON documents
   FOR EACH ROW EXECUTE FUNCTION notify_document_change();
+
+-- Mirror of 006_kb_sharing.sql so the test DB reflects the live schema.
+CREATE TYPE kb_visibility AS ENUM ('private', 'shared', 'public');
+
+ALTER TABLE knowledge_bases
+    ADD COLUMN visibility kb_visibility NOT NULL DEFAULT 'private',
+    ADD COLUMN public_slug TEXT,
+    ADD COLUMN share_token TEXT NOT NULL DEFAULT replace(gen_random_uuid()::text, '-', ''),
+    ADD COLUMN visibility_updated_at TIMESTAMPTZ,
+    ADD COLUMN published_at TIMESTAMPTZ,
+    ADD CONSTRAINT knowledge_bases_public_slug_format
+        CHECK (public_slug IS NULL OR public_slug ~ '^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$'),
+    ADD CONSTRAINT knowledge_bases_public_requires_slug
+        CHECK (visibility <> 'public' OR public_slug IS NOT NULL);
+
+CREATE UNIQUE INDEX idx_knowledge_bases_public_slug
+    ON knowledge_bases (public_slug)
+    WHERE public_slug IS NOT NULL;
+
+CREATE UNIQUE INDEX idx_knowledge_bases_share_token
+    ON knowledge_bases (share_token);
+
+CREATE INDEX idx_knowledge_bases_public_lookup
+    ON knowledge_bases (public_slug, updated_at)
+    WHERE visibility = 'public';

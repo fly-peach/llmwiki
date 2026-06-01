@@ -61,11 +61,15 @@ async def _init_workspace(workspace_path: str) -> None:
         if not overview_path.exists():
             overview_path.write_text(
                 f"This wiki tracks research on {ws_name}.\n\n## Key Findings\n\n"
-                "No sources ingested yet.\n\n## Recent Updates\n\nNo activity yet.\n"
+                "No sources ingested yet.\n\n## Recent Updates\n\nNo activity yet.\n",
+                encoding="utf-8",
             )
         log_path = ws / "wiki" / "log.md"
         if not log_path.exists():
-            log_path.write_text("Chronological record of ingests, queries, and maintenance passes.\n")
+            log_path.write_text(
+                "Chronological record of ingests, queries, and maintenance passes.\n",
+                encoding="utf-8",
+            )
 
         logger.info("Initialized workspace: %s", ws)
     else:

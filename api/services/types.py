@@ -1,40 +1,10 @@
-"""Shared types and utilities for service implementations."""
+"""Request/response models for the API surface."""
 
 import re
-from datetime import datetime
 from typing import Literal
-from uuid import UUID
 
-import yaml
 from pydantic import BaseModel, Field
 
-_FRONTMATTER_RE = re.compile(r"\A---[ \t]*\n(.+?\n)---[ \t]*\n", re.DOTALL)
-
-
-def parse_frontmatter(content: str) -> dict:
-    m = _FRONTMATTER_RE.match(content)
-    if not m:
-        return {}
-    try:
-        meta = yaml.safe_load(m.group(1))
-    except Exception:
-        return {}
-    return meta if isinstance(meta, dict) else {}
-
-
-def title_from_filename(filename: str) -> str:
-    stem = filename.rsplit(".", 1)[0] if "." in filename else filename
-    return stem.replace("-", " ").replace("_", " ").strip().title()
-
-
-def extract_tags(meta: dict) -> list[str]:
-    tags = meta.get("tags", [])
-    if isinstance(tags, list):
-        return [str(t) for t in tags if t is not None]
-    return []
-
-
-# ── Request/response models ──
 
 class CreateKB(BaseModel):
     name: str
@@ -44,6 +14,23 @@ class CreateKB(BaseModel):
 class UpdateKB(BaseModel):
     name: str | None = None
     description: str | None = None
+
+
+# Mirrors the DB CHECK constraint on knowledge_bases.public_slug.
+_PUBLIC_SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,78}[a-z0-9]$")
+
+
+class UpdateSharing(BaseModel):
+    visibility: Literal["private", "shared", "public"]
+    public_slug: str | None = Field(default=None, max_length=80)
+
+    def validated_slug(self) -> str | None:
+        if self.public_slug is None:
+            return None
+        slug = self.public_slug.strip().lower()
+        if not _PUBLIC_SLUG_RE.match(slug):
+            return None
+        return slug
 
 
 class CreateNote(BaseModel):
@@ -79,11 +66,31 @@ class TextAnchor(BaseModel):
     suffix: str | None = Field(default=None, max_length=200)
 
 
+class PdfRect(BaseModel):
+    """One line-rect of a PDF highlight, in PDF user-space points (1/72").
+    Zoom/rotation independent — viewer converts to viewport coords at render."""
+    x: float
+    y: float
+    width: float = Field(ge=0)
+    height: float = Field(ge=0)
+
+
+class PdfAnchor(BaseModel):
+    """PDF-relative anchor used when Highlight.type == "pdf".
+    Stored once per highlight; one rect per visual line of the selection."""
+    page: int = Field(ge=1)
+    textContent: str = Field(max_length=10000)
+    prefix: str | None = Field(default=None, max_length=200)
+    suffix: str | None = Field(default=None, max_length=200)
+    rects: list[PdfRect] = Field(min_length=1, max_length=200)
+
+
 class Highlight(BaseModel):
     id: str = Field(max_length=64)
     type: Literal["text", "pdf"] = "text"
     anchor: HighlightAnchor | None = None
     textAnchor: TextAnchor | None = None
+    pdfAnchor: PdfAnchor | None = None
     comment: str | None = Field(default=None, max_length=4000)
     color: str = Field(default="yellow", max_length=32)
     createdAt: str = Field(max_length=64)
@@ -114,7 +121,8 @@ class CreateWebClip(BaseModel):
     url: str = Field(max_length=2048)
     title: str = Field(max_length=512)
     html: str = Field(max_length=10 * 1024 * 1024)
-    highlights: list[Highlight] | None = None
+    path: str = Field(default="/webclipper/", max_length=256)
+    highlights: list[Highlight] | None = Field(default=None, max_length=500)
 
 
 class UpdateContent(BaseModel):

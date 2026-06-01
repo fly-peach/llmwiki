@@ -39,6 +39,11 @@ def _rows_to_dicts(cursor: aiosqlite.Cursor, rows: list[tuple]) -> list[dict]:
                 d["highlights"] = json.loads(d["highlights"])
             except (json.JSONDecodeError, TypeError):
                 d["highlights"] = []
+        if "metadata" in d and isinstance(d["metadata"], str):
+            try:
+                d["metadata"] = json.loads(d["metadata"])
+            except (json.JSONDecodeError, TypeError):
+                d["metadata"] = {}
         results.append(d)
     return results
 
@@ -61,7 +66,7 @@ class SqliteVaultFS(VaultFS):
         await _db.execute("PRAGMA journal_mode=WAL")
         await _db.execute("PRAGMA foreign_keys=ON")
         if _SCHEMA_PATH.exists():
-            await _db.executescript(_SCHEMA_PATH.read_text())
+            await _db.executescript(_SCHEMA_PATH.read_text(encoding='utf-8'))
             await _db.commit()
         logger.info("SQLite initialized: %s", db_path)
 
@@ -104,7 +109,7 @@ class SqliteVaultFS(VaultFS):
         db = self._db_or_raise()
         cursor = await db.execute(
             "SELECT id, user_id, filename, title, path, content, tags, version, "
-            "file_type, page_count, highlights, created_at, updated_at "
+            "file_type, page_count, highlights, metadata, date, created_at, updated_at "
             "FROM documents WHERE filename = ? AND path = ? AND status != 'failed'",
             (filename, dir_path),
         )
@@ -116,7 +121,7 @@ class SqliteVaultFS(VaultFS):
         name_lower = name.lower()
         cursor = await db.execute(
             "SELECT id, user_id, filename, title, path, content, tags, version, "
-            "file_type, page_count, highlights, created_at, updated_at "
+            "file_type, page_count, highlights, metadata, date, created_at, updated_at "
             "FROM documents WHERE (lower(filename) = ? OR lower(title) = ?) AND status != 'failed'",
             (name_lower, name_lower),
         )
@@ -204,16 +209,20 @@ class SqliteVaultFS(VaultFS):
     async def list_documents(self, kb_id: str) -> list[dict]:
         db = self._db_or_raise()
         cursor = await db.execute(
-            "SELECT id, filename, title, path, file_type, tags, page_count, updated_at "
-            "FROM documents WHERE status != 'failed' ORDER BY path, filename",
+            "SELECT id, filename, title, path, file_type, tags, page_count, date, updated_at "
+            "FROM documents WHERE status != 'failed' "
+            "AND COALESCE(json_extract(metadata, '$.asset'), 0) != 1 "
+            "ORDER BY path, filename",
         )
         return _rows_to_dicts(cursor, await cursor.fetchall())
 
     async def list_documents_with_content(self, kb_id: str) -> list[dict]:
         db = self._db_or_raise()
         cursor = await db.execute(
-            "SELECT id, filename, title, path, content, tags, file_type, page_count, highlights "
-            "FROM documents WHERE status != 'failed' ORDER BY path, filename",
+            "SELECT id, filename, title, path, content, tags, file_type, page_count, highlights, metadata, date "
+            "FROM documents WHERE status != 'failed' "
+            "AND COALESCE(json_extract(metadata, '$.asset'), 0) != 1 "
+            "ORDER BY path, filename",
         )
         return _rows_to_dicts(cursor, await cursor.fetchall())
 
@@ -239,10 +248,23 @@ class SqliteVaultFS(VaultFS):
         return _rows_to_dicts(cursor, await cursor.fetchall())
 
 
-    async def search_chunks(self, kb_id: str, query: str, limit: int, path_filter: str | None = None) -> list[dict]:
+    async def search_chunks(
+        self, kb_id: str, query: str, limit: int,
+        path_filter: str | None = None,
+        annotated_only: bool = False,
+        scope: str = "all",
+    ) -> list[dict]:
         db = self._db_or_raise()
+        # SQLite's chunks_fts only indexes `content` (which already includes
+        # annotations after sync). Scope filtering is a Python-side
+        # substring check; to avoid scope filters returning fewer rows than
+        # requested, over-fetch by 3x when scope narrows the set, then
+        # slice to the requested limit. Acceptable at personal scale;
+        # production hosted-mode uses Postgres + PGroonga per-column matches.
+        sql_limit = limit if scope == "all" else limit * 3
         sql = (
-            "SELECT dc.content, dc.page, dc.header_breadcrumb, dc.chunk_index, "
+            "SELECT dc.content, dc.source_content, dc.annotations_text, "
+            "dc.has_highlight, dc.page, dc.header_breadcrumb, dc.chunk_index, "
             "d.filename, d.title, d.path, d.file_type, d.tags, "
             "rank as score "
             "FROM document_chunks dc "
@@ -251,15 +273,36 @@ class SqliteVaultFS(VaultFS):
             "WHERE chunks_fts MATCH ? AND d.status != 'failed' "
         )
         params: list = [query]
+        if annotated_only:
+            sql += "AND dc.has_highlight = 1 "
         if path_filter == "wiki":
             sql += "AND d.source_kind = 'wiki' "
         elif path_filter == "sources":
             sql += "AND d.source_kind != 'wiki' "
         sql += "ORDER BY rank LIMIT ?"
-        params.append(limit)
+        params.append(sql_limit)
 
         cursor = await db.execute(sql, params)
-        return _rows_to_dicts(cursor, await cursor.fetchall())
+        rows = _rows_to_dicts(cursor, await cursor.fetchall())
+
+        # Label each row + apply scope filter, then slice to `limit`.
+        q_lower = query.lower()
+        labeled: list[dict] = []
+        for r in rows:
+            src = (r.get("source_content") or "").lower()
+            ann = (r.get("annotations_text") or "").lower()
+            source_hit = q_lower in src
+            annotation_hit = bool(ann) and q_lower in ann
+            if scope == "annotations" and not annotation_hit:
+                continue
+            if scope == "source" and not source_hit:
+                continue
+            r["source_hit"] = source_hit
+            r["annotation_hit"] = annotation_hit
+            labeled.append(r)
+            if len(labeled) >= limit:
+                break
+        return labeled
 
 
     async def load_source_bytes(self, doc: dict) -> bytes | None:
@@ -268,6 +311,17 @@ class SqliteVaultFS(VaultFS):
 
     async def load_image_bytes(self, doc_id: str, image_id: str) -> bytes | None:
         return self._load_local_bytes(f"local/{doc_id}/images/{image_id}")
+
+    async def load_asset_bytes(self, asset_doc_id: str) -> bytes | None:
+        db = self._db_or_raise()
+        cursor = await db.execute(
+            "SELECT id, filename, path, file_type, relative_path FROM documents WHERE id = ? AND status != 'failed'",
+            (asset_doc_id,),
+        )
+        rows = _rows_to_dicts(cursor, await cursor.fetchall())
+        if not rows:
+            return None
+        return await self.load_source_bytes(rows[0])
 
     def _load_local_bytes(self, key: str) -> bytes | None:
         if _workspace_root is None:
@@ -350,7 +404,7 @@ class SqliteVaultFS(VaultFS):
     async def get_forward_references(self, doc_id: str) -> list[dict]:
         db = self._db_or_raise()
         cursor = await db.execute(
-            "SELECT d.filename, d.title, d.path, dr.reference_type, dr.page "
+            "SELECT d.id, d.filename, d.title, d.path, dr.reference_type, dr.page "
             "FROM document_references dr "
             "JOIN documents d ON dr.target_document_id = d.id "
             "WHERE dr.source_document_id = ? AND d.status != 'failed' "
