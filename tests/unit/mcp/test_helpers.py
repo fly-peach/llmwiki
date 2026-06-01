@@ -93,10 +93,22 @@ class TestCitationParsing:
         name, _ = _parse_citation_filename("[Paper Title](http://example.com)")
         assert name == "Paper Title"
 
+    def test_markdown_link_keeps_page_suffix(self):
+        from tools.references import _parse_citation_filename
+        name, page = _parse_citation_filename("[paper.pdf](http://example.com), p.7")
+        assert name == "paper.pdf"
+        assert page == 7
+
     def test_strips_trailing_dash_text(self):
         from tools.references import _parse_citation_filename
         name, page = _parse_citation_filename("paper.pdf, p.5 — section on scaling")
         assert name == "paper.pdf"
+        assert page == 5
+
+    def test_preserves_hyphenated_version_suffix(self):
+        from tools.references import _parse_citation_filename
+        name, page = _parse_citation_filename("2501.12948v2-2.pdf, p.5")
+        assert name == "2501.12948v2-2.pdf"
         assert page == 5
 
     def test_strips_em_dash(self):

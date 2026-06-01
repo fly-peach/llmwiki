@@ -35,7 +35,7 @@ class DeleteHandler:
 
         if not deletable:
             names = ", ".join(f"`{d['path']}{d['filename']}`" for d in protected)
-            return f"Cannot delete {names} — these are structural wiki pages. Use `write` to edit their content instead."
+            return f"Cannot delete {names} — these are structural wiki pages. Use `edit` or `append` to modify their content instead."
 
         self.fs.delete_from_disk(deletable)
 

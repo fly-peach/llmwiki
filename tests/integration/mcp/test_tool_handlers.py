@@ -54,6 +54,27 @@ class TestWriteReadFlow:
         result = await writer.create("/", "Title", "content", [], "", False)
         assert "tag is required" in result
 
+    async def test_create_uses_frontmatter_tags_as_index_source(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from tools.search import SearchHandler
+
+        kb = _make_kb(kb_id)
+        writer = WriteHandler(instance, kb)
+        searcher = SearchHandler(instance, kb)
+
+        await writer.create(
+            "/wiki/",
+            "Tagged From Frontmatter",
+            "---\ntags: [frontmatter-tag]\n---\n\nBody",
+            [],
+            "",
+            False,
+        )
+
+        result = await searcher.list_documents("*", ["frontmatter-tag"])
+        assert "tagged-from-frontmatter.md" in result
+
     async def test_create_rejects_duplicate_without_overwrite(self, fs):
         instance, kb_id = fs
         from tools.write import WriteHandler
@@ -114,6 +135,28 @@ class TestWriteReadFlow:
         result = await writer.edit("repeat.md", "foo", "baz", None)
         assert "2 matches" in result
 
+    async def test_edit_tags_arg_does_not_clobber_frontmatter_tags(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from tools.search import SearchHandler
+
+        kb = _make_kb(kb_id)
+        writer = WriteHandler(instance, kb)
+        searcher = SearchHandler(instance, kb)
+
+        await writer.create(
+            "/wiki/",
+            "Metadata Tags",
+            "---\ntags: [frontmatter-tag]\n---\n\nold body",
+            ["arg-tag"],
+            "",
+            False,
+        )
+        await writer.edit("wiki/metadata-tags.md", "old body", "new body", ["edit-tag"])
+
+        assert "metadata-tags.md" in await searcher.list_documents("*", ["frontmatter-tag"])
+        assert "metadata-tags.md" not in await searcher.list_documents("*", ["edit-tag"])
+
     async def test_append_adds_content(self, fs):
         instance, kb_id = fs
         from tools.write import WriteHandler
@@ -130,6 +173,80 @@ class TestWriteReadFlow:
         content = await reader.read("log.md", "", None, False)
         assert "Entry 1" in content
         assert "Entry 2" in content
+
+    async def test_append_inserts_before_trailing_footnotes(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from tools.read import ReadHandler
+
+        kb = _make_kb(kb_id)
+        writer = WriteHandler(instance, kb)
+        reader = ReadHandler(instance, kb)
+
+        await writer.create(
+            "/wiki/",
+            "Footnoted",
+            "Body text.[^1]\n\n[^1]: source.pdf, p.3",
+            ["wiki"],
+            "",
+            False,
+        )
+        result = await writer.append("wiki/footnoted.md", "## New Section\n\nMore body.", None)
+        assert "Appended" in result
+
+        content = await reader.read("wiki/footnoted.md", "", None, False)
+        assert content.index("## New Section") < content.index("[^1]: source.pdf")
+
+    async def test_append_renumbers_colliding_footnotes(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from tools.read import ReadHandler
+
+        kb = _make_kb(kb_id)
+        writer = WriteHandler(instance, kb)
+        reader = ReadHandler(instance, kb)
+
+        await writer.create(
+            "/wiki/",
+            "Footnote Collision",
+            "Existing claim.[^1]\n\n[^1]: first.pdf, p.1",
+            ["wiki"],
+            "",
+            False,
+        )
+        await writer.append(
+            "wiki/footnote-collision.md",
+            "New claim.[^1]\n\n[^1]: second.pdf, p.2",
+            None,
+        )
+
+        content = await reader.read("wiki/footnote-collision.md", "", None, False)
+        assert "Existing claim.[^1]" in content
+        assert "New claim.[^2]" in content
+        assert "[^1]: first.pdf, p.1" in content
+        assert "[^2]: second.pdf, p.2" in content
+
+    async def test_append_tags_arg_does_not_clobber_frontmatter_tags(self, fs):
+        instance, kb_id = fs
+        from tools.write import WriteHandler
+        from tools.search import SearchHandler
+
+        kb = _make_kb(kb_id)
+        writer = WriteHandler(instance, kb)
+        searcher = SearchHandler(instance, kb)
+
+        await writer.create(
+            "/wiki/",
+            "Append Metadata",
+            "---\ntags: [frontmatter-tag]\n---\n\nBody",
+            ["arg-tag"],
+            "",
+            False,
+        )
+        await writer.append("wiki/append-metadata.md", "More body", ["append-tag"])
+
+        assert "append-metadata.md" in await searcher.list_documents("*", ["frontmatter-tag"])
+        assert "append-metadata.md" not in await searcher.list_documents("*", ["append-tag"])
 
     async def test_append_missing_document(self, fs):
         instance, kb_id = fs

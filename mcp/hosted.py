@@ -1,6 +1,8 @@
 """Supavault MCP Server — knowledge vault tools for Claude."""
 
+import importlib.util
 import os
+from pathlib import Path
 
 import logfire
 import sentry_sdk
@@ -15,9 +17,24 @@ from starlette.responses import PlainTextResponse
 from starlette.routing import Route
 
 from auth import SupabaseTokenVerifier
-from config import settings
 from tools import register
 from vaultfs import PostgresVaultFS
+
+
+def _load_local_settings():
+    """Load mcp/config.py even when another top-level `config` is cached."""
+    spec = importlib.util.spec_from_file_location(
+        "llmwiki_mcp_config",
+        Path(__file__).with_name("config.py"),
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Could not load MCP config")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.settings
+
+
+settings = _load_local_settings()
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(
