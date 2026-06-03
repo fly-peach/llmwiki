@@ -49,6 +49,8 @@ nvidia-10k-first20.md
 .playwright-mcp
 .pytest_cache
 
+CLAUDE.md
+
 # Supabase CLI cache
 supabase/.temp/
 

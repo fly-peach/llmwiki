@@ -1,6 +1,7 @@
 import { getSupabase } from "@/lib/supabase";
 import { getApiUrl } from "@/lib/settings";
 import { isAllowedApiFetchUrl, isSupportedRemoteResourceUrl } from "@/lib/security";
+import { registerForGrantedOrigins } from "@/lib/permissions";
 import type { AuthChangeEvent, Session } from "@supabase/auth-js";
 
 type Message =
@@ -28,10 +29,11 @@ interface ApiFetchResponse {
 export default defineBackground(() => {
   const supabase = getSupabase();
 
-  // Keep session fresh across service worker restarts
-  supabase.auth.onAuthStateChange((event: AuthChangeEvent, _session: Session | null) => {
-    console.log("[bg] auth:", event);
-  });
+  registerForGrantedOrigins();
+  chrome.runtime.onStartup.addListener(() => registerForGrantedOrigins());
+  chrome.runtime.onInstalled.addListener(() => registerForGrantedOrigins());
+
+  supabase.auth.onAuthStateChange((_event: AuthChangeEvent, _session: Session | null) => {});
 
   chrome.runtime.onMessage.addListener(
     (message: Message, _sender, sendResponse) => {
@@ -66,8 +68,9 @@ export default defineBackground(() => {
   // Content scripts in MV3 fetch from the page's origin, which means most
   // sites (Substack, console.cloud.google.com, NYT, etc.) block our calls
   // via CORS or strict CSP. The background service worker has the privileged
-  // chrome-extension origin and host_permissions for <all_urls>, so it can
-  // make the request and forward the result.
+  // chrome-extension origin and the required host_permission for the API
+  // origin, so it can make the request and forward the result. The target is
+  // gated to the configured API origin by isAllowedApiFetchUrl.
 
   async function apiFetchProxy(
     msg: {

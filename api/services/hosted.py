@@ -269,6 +269,22 @@ def _normalize_webclip_path(path: str | None) -> str:
     return normalized
 
 
+def _merge_highlights_by_id(existing: list[dict], incoming: list[dict]) -> list[dict]:
+    merged: dict[str, dict] = {}
+    order: list[str] = []
+    for highlight in [*existing, *incoming]:
+        if not isinstance(highlight, dict):
+            continue
+        highlight_id = highlight.get("id")
+        if not highlight_id:
+            continue
+        if highlight_id not in merged:
+            order.append(highlight_id)
+        current = merged.get(highlight_id, {})
+        merged[highlight_id] = {**current, **highlight}
+    return [merged[highlight_id] for highlight_id in order]
+
+
 class HostedDocumentService(DocumentService):
 
     def __init__(self, pool, user_id: str, s3=None):
@@ -375,8 +391,20 @@ class HostedDocumentService(DocumentService):
         parser = Parser(html, url=url, content_only=True)
         result = parser.parse(highlights=highlights or [])
 
-        filename = self._slugify_filename(title, "md")
-        filename = await self._dedupe_filename(kb_id, path, filename, "md")
+        existing_preview = await self.pool.fetchrow(
+            "SELECT id::text, filename FROM documents "
+            "WHERE knowledge_base_id = $1 AND user_id = $2 AND NOT archived "
+            "AND metadata->>'source_url' = $3 "
+            "AND COALESCE(metadata->>'asset', 'false') <> 'true' "
+            "ORDER BY updated_at DESC LIMIT 1",
+            kb_id, self.user_id, url,
+        )
+
+        if existing_preview:
+            filename = existing_preview["filename"]
+        else:
+            filename = self._slugify_filename(title, "md")
+            filename = await self._dedupe_filename(kb_id, path, filename, "md")
         stem = filename.rsplit(".", 1)[0]
         markdown, assets = await materialize_webclip_assets(
             result.content,
@@ -390,8 +418,7 @@ class HostedDocumentService(DocumentService):
         await self._check_storage_available(file_size)
 
         enriched = self._merge_text_anchors(highlights or [], result.highlights)
-        highlights_json = json.dumps(enriched)
-        parent_doc_id = str(uuid.uuid4())
+        parent_doc_id = str(existing_preview["id"]) if existing_preview else str(uuid.uuid4())
         for asset in assets:
             asset.document_id = str(uuid.uuid4())
 
@@ -414,14 +441,46 @@ class HostedDocumentService(DocumentService):
             async with conn.transaction():
                 await conn.execute("SELECT pg_advisory_xact_lock(hashtext($1))", self.user_id)
                 await self._check_storage_available(file_size, conn=conn)
-                row = await conn.fetchrow(
-                    f"INSERT INTO documents (id, knowledge_base_id, user_id, filename, path, title, "
-                    f"file_type, file_size, status, content, tags, metadata, highlights) "
-                    f"VALUES ($1, $2, $3, $4, $5, $6, 'md', $7, 'ready', $8, $9, $10, $11::jsonb) "
-                    f"RETURNING {_DOC_COLUMNS}",
-                    parent_doc_id, kb_id, self.user_id, filename, path, title, markdown_size, markdown,
-                    [], json.dumps(parent_metadata), highlights_json,
-                )
+                existing = None
+                if existing_preview:
+                    existing = await conn.fetchrow(
+                        "SELECT id::text, version, highlights FROM documents "
+                        "WHERE id = $1 AND user_id = $2 FOR UPDATE",
+                        parent_doc_id, self.user_id,
+                    )
+                if not existing:
+                    existing = await conn.fetchrow(
+                        "SELECT id::text, version, highlights FROM documents "
+                        "WHERE knowledge_base_id = $1 AND user_id = $2 AND NOT archived "
+                        "AND metadata->>'source_url' = $3 "
+                        "AND COALESCE(metadata->>'asset', 'false') <> 'true' "
+                        "ORDER BY updated_at DESC LIMIT 1 FOR UPDATE",
+                        kb_id, self.user_id, url,
+                    )
+
+                if existing:
+                    parent_doc_id = str(existing["id"])
+                    current_highlights = self._parse_highlights(existing["highlights"])
+                    next_highlights = _merge_highlights_by_id(current_highlights, enriched)
+                    row = await conn.fetchrow(
+                        f"UPDATE documents SET path = $1, title = $2, file_size = $3, "
+                        f"status = 'ready', content = $4, metadata = $5::jsonb, "
+                        f"highlights = $6::jsonb, version = version + 1, updated_at = now() "
+                        f"WHERE id = $7 AND user_id = $8 "
+                        f"RETURNING {_DOC_COLUMNS}",
+                        path, title, markdown_size, markdown, json.dumps(parent_metadata),
+                        json.dumps(next_highlights), parent_doc_id, self.user_id,
+                    )
+                else:
+                    next_highlights = enriched
+                    row = await conn.fetchrow(
+                        f"INSERT INTO documents (id, knowledge_base_id, user_id, filename, path, title, "
+                        f"file_type, file_size, status, content, tags, metadata, highlights) "
+                        f"VALUES ($1, $2, $3, $4, $5, $6, 'md', $7, 'ready', $8, $9, $10, $11::jsonb) "
+                        f"RETURNING {_DOC_COLUMNS}",
+                        parent_doc_id, kb_id, self.user_id, filename, path, title, markdown_size, markdown,
+                        [], json.dumps(parent_metadata), json.dumps(next_highlights),
+                    )
                 for asset in assets:
                     await conn.execute(
                         "INSERT INTO documents (id, knowledge_base_id, user_id, filename, path, title, "
@@ -444,23 +503,25 @@ class HostedDocumentService(DocumentService):
                             **asset.metadata(),
                         }),
                     )
-                if markdown:
-                    chunks = chunk_text(markdown)
-                    if chunks:
-                        await store_chunks(conn, str(row["id"]), self.user_id, str(kb_id), chunks)
-                        # Materialize the highlights we just persisted into
-                        # the freshly-created chunks. Without this, comments
-                        # on a clipped-with-highlights doc would not be
-                        # searchable until the user touched the highlight
-                        # again (next upsert/delete triggers materialization).
-                        if enriched:
-                            await self._recompute_chunks_for_doc(
-                                conn, str(row["id"]), [], enriched,
-                            )
+                chunks = chunk_text(markdown) if markdown else []
+                if chunks:
+                    await store_chunks(conn, str(row["id"]), self.user_id, str(kb_id), chunks)
+                else:
+                    await conn.execute("DELETE FROM document_chunks WHERE document_id = $1", str(row["id"]))
+                # Materialize the highlights we just persisted into the
+                # freshly-created chunks. Without this, comments on a
+                # clipped-with-highlights doc would not be searchable until
+                # the user touched the highlight again.
+                if next_highlights:
+                    await self._recompute_chunks_for_doc(
+                        conn, str(row["id"]), [], next_highlights,
+                    )
         finally:
             await self.pool.release(conn)
 
-        return dict(row)
+        response = dict(row)
+        response["highlights"] = next_highlights
+        return response
 
     @staticmethod
     def _merge_text_anchors(payloads: list[dict], mapped) -> list[dict]:
@@ -826,7 +887,7 @@ class HostedDocumentService(DocumentService):
             params.append(fields["tags"])
             idx += 1
         if "metadata" in fields:
-            sets.append(f"metadata = ${idx}")
+            sets.append(f"metadata = COALESCE(metadata, '{{}}'::jsonb) || ${idx}::jsonb")
             params.append(_json.dumps(fields["metadata"]))
             idx += 1
 

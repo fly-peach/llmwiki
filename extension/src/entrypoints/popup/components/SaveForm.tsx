@@ -16,6 +16,7 @@ import {
 import KBPicker from "./KBPicker";
 import StatusFeedback, { type Status } from "./StatusFeedback";
 import { recordSave } from "@/lib/streak";
+import { enableSiteFromPopup } from "@/lib/permissions";
 
 const TRACKING_PARAMS = new Set([
   "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
@@ -47,6 +48,15 @@ function safeHost(href: string): string {
     return new URL(href).hostname.replace(/^www\./, "");
   } catch {
     return href;
+  }
+}
+
+function httpOriginOf(href: string): string | null {
+  try {
+    const { origin, protocol } = new URL(href);
+    return protocol === "http:" || protocol === "https:" ? origin : null;
+  } catch {
+    return null;
   }
 }
 
@@ -155,6 +165,13 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
   async function handleSave() {
     if (!tab || !knowledgeBaseId) return;
 
+    // First in the gesture: chrome.permissions.request needs an active gesture.
+    // activeTab covers the capture below, so a decline doesn't block saving.
+    const origin = httpOriginOf(tab.url);
+    if (origin) {
+      await enableSiteFromPopup(origin, tab.tabId).catch(() => false);
+    }
+
     try {
       if (tab.isPdf) {
         await handleSavePdf();
@@ -180,13 +197,26 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
       const [{ result }] = await chrome.scripting.executeScript({
         target: { tabId: tab.tabId },
         func: async () => {
-          const MAX_IMAGES = 12;
+          const MAX_IMAGES = 24;
           const MAX_IMAGE_BYTES = 2_500_000;
           const MAX_TOTAL_BYTES = 6_000_000;
+          const LAZY_IMAGE_SRC_ATTRIBUTES = [
+            "data-src",
+            "data-original",
+            "data-lazy-src",
+            "data-hires",
+            "data-url",
+            "data-image",
+            "data-full-url",
+          ];
+          const LAZY_IMAGE_SRCSET_ATTRIBUTES = [
+            "data-srcset",
+            "data-lazy-srcset",
+          ];
 
           const clone = document.documentElement.cloneNode(true) as HTMLElement;
           clone.querySelectorAll(
-            ".llmwiki-pill, .llmwiki-popover, #llmwiki-highlight-style",
+            ".llmwiki-pill, .llmwiki-popover, .llmwiki-toast, #llmwiki-highlight-style",
           ).forEach((el) => el.remove());
           clone.querySelectorAll("mark.llmwiki-hl").forEach((mark) => {
             const parent = mark.parentNode;
@@ -199,30 +229,55 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
           const cloneImages = Array.from(clone.querySelectorAll("img"));
           const candidates = liveImages
             .map((img, index) => {
-              const rect = img.getBoundingClientRect();
-              const width = Math.round(rect.width || img.naturalWidth || 0);
-              const height = Math.round(rect.height || img.naturalHeight || 0);
-              const src = img.currentSrc || img.src || largestSrcsetUrl(img.srcset) || "";
+              const { width, height } = imageDimensions(img);
+              const src = candidateImageUrl(img);
               const inArticle = !!img.closest("article, main, [role='main']");
+              const hasKnownSize = width > 0 && height > 0;
+              const area = hasKnownSize ? width * height : 120_000;
               return {
                 index,
                 src,
                 width,
                 height,
-                score: (inArticle ? 10_000_000 : 0) + width * height,
+                inArticle,
+                hasKnownSize,
+                score: (inArticle ? 10_000_000 : 0) + area,
               };
             })
             .filter((item) => {
               if (!item.src || item.src.startsWith("data:") || item.src.startsWith("blob:")) return false;
               if (!/^https?:\/\//i.test(item.src)) return false;
-              return item.width >= 80 && item.height >= 50;
+              if (item.width >= 80 && item.height >= 50) return true;
+              return item.inArticle && !item.hasKnownSize;
             })
             .sort((a, b) => b.score - a.score)
             .slice(0, MAX_IMAGES);
 
+          const pageOrigin = location.origin;
+          const isSameOrigin = (src: string): boolean => {
+            try {
+              return new URL(src).origin === pageOrigin;
+            } catch {
+              return false;
+            }
+          };
+
           let totalBytes = 0;
           for (const item of candidates) {
-            if (totalBytes >= MAX_TOTAL_BYTES) break;
+            const cloneImg = cloneImages[item.index];
+            if (!cloneImg) continue;
+
+            // Cross-origin images are fetched server-side; just normalize the src.
+            if (!isSameOrigin(item.src)) {
+              cloneImg.setAttribute("src", item.src);
+              cloneImg.removeAttribute("srcset");
+              cloneImg.removeAttribute("sizes");
+              if (item.width) cloneImg.setAttribute("width", String(item.width));
+              if (item.height) cloneImg.setAttribute("height", String(item.height));
+              continue;
+            }
+
+            if (totalBytes >= MAX_TOTAL_BYTES) continue;
             const remaining = MAX_TOTAL_BYTES - totalBytes;
             const maxBytes = Math.min(MAX_IMAGE_BYTES, remaining);
             try {
@@ -233,8 +288,6 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
               });
               if (!response?.dataUrl || response?.error) continue;
               totalBytes += response.size ?? 0;
-              const cloneImg = cloneImages[item.index];
-              if (!cloneImg) continue;
               cloneImg.setAttribute("src", response.dataUrl);
               cloneImg.removeAttribute("srcset");
               cloneImg.removeAttribute("sizes");
@@ -247,6 +300,58 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
           }
 
           return clone.outerHTML;
+
+          function absoluteImageUrl(value: string | null | undefined): string {
+            if (!value) return "";
+            const trimmed = value.trim();
+            if (!trimmed) return "";
+            try {
+              return new URL(trimmed, location.href).toString();
+            } catch {
+              return trimmed;
+            }
+          }
+
+          function pictureSourceUrl(img: HTMLImageElement): string {
+            const picture = img.closest("picture");
+            if (!picture) return "";
+            for (const source of Array.from(picture.querySelectorAll("source"))) {
+              const srcset = source.getAttribute("srcset") || source.getAttribute("data-srcset") || "";
+              const best = largestSrcsetUrl(srcset);
+              if (best) return best;
+              const src = absoluteImageUrl(source.getAttribute("src"));
+              if (src) return src;
+            }
+            return "";
+          }
+
+          function candidateImageUrl(img: HTMLImageElement): string {
+            const directCandidates = [
+              img.currentSrc,
+              img.getAttribute("src"),
+              img.src,
+              largestSrcsetUrl(img.getAttribute("srcset") || ""),
+              pictureSourceUrl(img),
+              ...LAZY_IMAGE_SRC_ATTRIBUTES.map((attr) => img.getAttribute(attr)),
+              ...LAZY_IMAGE_SRCSET_ATTRIBUTES.map((attr) => largestSrcsetUrl(img.getAttribute(attr) || "")),
+            ];
+
+            for (const candidate of directCandidates) {
+              const src = absoluteImageUrl(candidate);
+              if (src) return src;
+            }
+            return "";
+          }
+
+          function imageDimensions(img: HTMLImageElement): { width: number; height: number } {
+            const rect = img.getBoundingClientRect();
+            const widthAttr = Number.parseInt(img.getAttribute("width") || "", 10);
+            const heightAttr = Number.parseInt(img.getAttribute("height") || "", 10);
+            return {
+              width: Math.round(rect.width || img.naturalWidth || widthAttr || 0),
+              height: Math.round(rect.height || img.naturalHeight || heightAttr || 0),
+            };
+          }
 
           function largestSrcsetUrl(srcset: string): string {
             let bestUrl = "";
@@ -317,8 +422,8 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
       title: title || tab.title,
       path: normalizedFolderPath,
       filename: "",
-      version: 1,
-      highlights,
+      version: result.version ?? 1,
+      highlights: result.highlights ?? highlights,
     });
     setSelectedKnowledgeBaseId(knowledgeBaseId).catch(() => {});
     setSelectedFolderPath(normalizedFolderPath).catch(() => {});

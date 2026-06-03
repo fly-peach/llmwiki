@@ -3,17 +3,21 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import mimetypes
 import re
+import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+import httpx
 from html_parser import Image
-
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 IMAGE_TIMEOUT = 10
 IMAGE_CONCURRENCY = 6
+MAX_IMAGE_REDIRECTS = 3
+MAX_REMOTE_IMAGES = 50
 
 SAFE_MIME_EXT = {
     "image/jpeg": "jpg",
@@ -70,11 +74,15 @@ async def materialize_webclip_assets(
 
     sem = asyncio.Semaphore(IMAGE_CONCURRENCY)
     assets_by_ref: dict[str, WebclipAsset] = {}
+    remote_allowed = {
+        image.ref
+        for image in [i for i in images if i.ref and _is_remote_url(i.url)][:MAX_REMOTE_IMAGES]
+    }
 
     async def fetch_one(index: int, image: Image) -> None:
         if not image.ref:
             return
-        if not image.url.startswith("data:"):
+        if _is_remote_url(image.url) and image.ref not in remote_allowed:
             return
 
         fetched: tuple[bytes, str, str] | None = None
@@ -125,10 +133,93 @@ def _remove_markdown_image_ref(markdown: str, token: str) -> str:
     return markdown if count else markdown.replace(token, "")
 
 
+def _is_remote_url(url: str) -> bool:
+    return url.startswith(("http://", "https://"))
+
+
 async def _fetch_image(url: str) -> tuple[bytes, str] | None:
-    if not url.startswith("data:"):
+    if url.startswith("data:"):
+        return _decode_data_image(url)
+    if _is_remote_url(url):
+        return await _fetch_remote_image(url)
+    return None
+
+
+def _is_public_host(host: str) -> bool:
+    """Reject hosts resolving to non-routable / internal addresses (SSRF guard)."""
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False
+    for info in infos:
+        ip = info[4][0]
+        try:
+            addr = ipaddress.ip_address(ip)
+        except ValueError:
+            return False
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+            or addr.is_unspecified
+        ):
+            return False
+    return True
+
+
+async def _fetch_remote_image(url: str) -> tuple[bytes, str] | None:
+    """Fetch an external image with SSRF guards and size/type validation, or None."""
+    current = url
+    async with httpx.AsyncClient(timeout=IMAGE_TIMEOUT, follow_redirects=False) as client:
+        for _ in range(MAX_IMAGE_REDIRECTS + 1):
+            parsed = urlparse(current)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                return None
+            if not _is_public_host(parsed.hostname):
+                return None
+            try:
+                async with client.stream("GET", current, headers={"Accept": "image/*"}) as resp:
+                    redirect = _redirect_target(resp)
+                    if redirect:
+                        current = redirect
+                        continue
+                    return await _read_image_response(resp)
+            except (httpx.HTTPError, ValueError):
+                return None
+    return None
+
+
+def _redirect_target(resp: httpx.Response) -> str | None:
+    if not resp.is_redirect:
         return None
-    return _decode_data_image(url)
+    location = resp.headers.get("location")
+    return str(resp.url.join(location)) if location else None
+
+
+async def _read_image_response(resp: httpx.Response) -> tuple[bytes, str] | None:
+    if resp.status_code != 200:
+        return None
+
+    content_length = resp.headers.get("content-length")
+    if content_length and content_length.isdigit() and int(content_length) > MAX_IMAGE_BYTES:
+        return None
+
+    chunks = bytearray()
+    async for chunk in resp.aiter_bytes():
+        chunks.extend(chunk)
+        if len(chunks) > MAX_IMAGE_BYTES:
+            return None
+    data = bytes(chunks)
+
+    sniffed = _sniff_image_type(data)
+    content_type = _clean_content_type(resp.headers.get("content-type", ""))
+    if content_type not in SAFE_MIME_EXT:
+        content_type = sniffed or ""
+    if content_type not in SAFE_MIME_EXT or sniffed != content_type:
+        return None
+    return data, content_type
 
 
 def _decode_data_image(url: str) -> tuple[bytes, str] | None:

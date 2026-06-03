@@ -5,11 +5,10 @@ produce on the parsed markdown — markdown punctuation removed, block
 separation preserved, inline spans flattened.
 """
 
+import socket
+
 import pytest
-
 from html_parser import Parser
-from html_parser.models import TextAnchor
-
 
 # ── Plaintext extraction ──────────────────────────────────
 
@@ -230,38 +229,95 @@ def test_parser_prefers_srcset_candidates_over_placeholder_src():
 
 
 @pytest.mark.asyncio
-async def test_webclip_asset_materialization_drops_non_inlined_remote_images(monkeypatch):
+async def test_webclip_asset_materialization_fetches_remote_images(monkeypatch):
+    import base64 as _b64
+
     from html_parser.models import Image
     from services import webclip_assets
     from services.webclip_assets import materialize_webclip_assets
 
-    calls: list[str] = []
+    png_1x1 = (
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+    )
+    png_bytes = _b64.b64decode(png_1x1)
 
-    async def fake_fetch(url: str):
-        calls.append(url)
-        raise AssertionError("remote image URLs must not be fetched server-side")
+    async def fake_remote(url: str):
+        return png_bytes, "image/png"
 
-    monkeypatch.setattr(webclip_assets, "_fetch_image", fake_fetch)
+    monkeypatch.setattr(webclip_assets, "_fetch_remote_image", fake_remote)
 
     markdown, assets = await materialize_webclip_assets(
         "![Hero](llmwiki-image://IMG1)",
-        [
-            Image(
-                url="https://cdn.example/image/-1x-1.webp",
-                alt="Hero",
-                ref="IMG1",
-                candidate_urls=[
-                    "https://cdn.example/image/-1x-1.webp",
-                    "https://cdn.example/image/1200x801.webp",
-                ],
-            )
-        ],
+        [Image(url="https://cdn.example/hero.png", alt="Hero", ref="IMG1")],
         "article.assets",
     )
 
-    assert calls == []
+    assert "llmwiki-image://" not in markdown
+    assert "![Hero](./article.assets/image-01.png)" in markdown
+    assert len(assets) == 1
+    assert assets[0].content_type == "image/png"
+    assert assets[0].original_url == "https://cdn.example/hero.png"
+
+
+@pytest.mark.asyncio
+async def test_webclip_asset_materialization_drops_remote_images_when_fetch_fails(monkeypatch):
+    from html_parser.models import Image
+    from services import webclip_assets
+    from services.webclip_assets import materialize_webclip_assets
+
+    async def fake_remote(url: str):
+        return None  # paywalled / unreachable / SSRF-blocked
+
+    monkeypatch.setattr(webclip_assets, "_fetch_remote_image", fake_remote)
+
+    markdown, assets = await materialize_webclip_assets(
+        "![Hero](llmwiki-image://IMG1)",
+        [Image(url="https://cdn.example/hero.png", alt="Hero", ref="IMG1")],
+        "article.assets",
+    )
+
     assert markdown == ""
     assert assets == []
+
+
+@pytest.mark.parametrize("ip", ["127.0.0.1", "169.254.169.254", "10.0.0.5", "192.168.1.1", "::1"])
+def test_is_public_host_rejects_internal_addresses(monkeypatch, ip):
+    from services import webclip_assets
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        family = socket.AF_INET6 if ":" in ip else socket.AF_INET
+        return [(family, socket.SOCK_STREAM, 6, "", (ip, 0))]
+
+    monkeypatch.setattr(webclip_assets.socket, "getaddrinfo", fake_getaddrinfo)
+    assert webclip_assets._is_public_host("evil.example") is False
+
+
+def test_is_public_host_allows_public_address(monkeypatch):
+    from services import webclip_assets
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0))]
+
+    monkeypatch.setattr(webclip_assets.socket, "getaddrinfo", fake_getaddrinfo)
+    assert webclip_assets._is_public_host("example.com") is True
+
+
+@pytest.mark.asyncio
+async def test_fetch_remote_image_blocks_metadata_endpoint(monkeypatch):
+    from services import webclip_assets
+
+    def fake_getaddrinfo(host, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("169.254.169.254", 0))]
+
+    monkeypatch.setattr(webclip_assets.socket, "getaddrinfo", fake_getaddrinfo)
+
+    def fail_stream(*args, **kwargs):
+        raise AssertionError("must not issue HTTP to a blocked host")
+
+    monkeypatch.setattr(webclip_assets.httpx.AsyncClient, "stream", fail_stream)
+
+    result = await webclip_assets._fetch_remote_image("http://169.254.169.254/latest/meta-data/")
+    assert result is None
 
 
 @pytest.mark.asyncio
