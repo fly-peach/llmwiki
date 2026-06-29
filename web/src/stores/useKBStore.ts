@@ -12,7 +12,7 @@ type KBState = {
   loading: boolean
   error: string | null
   fetchKBs: (options?: FetchKBsOptions) => Promise<KnowledgeBase[]>
-  createKB: (name: string, description?: string) => Promise<KnowledgeBase>
+  createKB: (name: string, description?: string, kind?: 'wiki' | 'course') => Promise<KnowledgeBase>
   deleteKB: (id: string) => Promise<void>
   renameKB: (id: string, name: string) => Promise<void>
 }
@@ -43,11 +43,11 @@ export const useKBStore = create<KBState>((set, get) => ({
     }
   },
 
-  createKB: async (name: string, description?: string) => {
+  createKB: async (name: string, description?: string, kind?: 'wiki' | 'course') => {
     const token = getToken()
     const kb = await apiFetch<KnowledgeBase>('/v1/knowledge-bases', token, {
       method: 'POST',
-      body: JSON.stringify({ name, description: description || undefined }),
+      body: JSON.stringify({ name, description: description || undefined, kind: kind === 'course' ? kind : undefined }),
     })
     // Dedupe: in local mode the backend returns the existing singleton
     const existing = get().knowledgeBases

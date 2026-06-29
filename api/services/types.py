@@ -9,11 +9,13 @@ from pydantic import BaseModel, Field
 class CreateKB(BaseModel):
     name: str
     description: str | None = None
+    kind: Literal["wiki", "course"] | None = None
 
 
 class UpdateKB(BaseModel):
     name: str | None = None
     description: str | None = None
+    kind: Literal["wiki", "course"] | None = None
 
 
 # Mirrors the DB CHECK constraint on knowledge_bases.public_slug.

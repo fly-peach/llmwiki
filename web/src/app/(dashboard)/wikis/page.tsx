@@ -10,12 +10,18 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { useTheme } from 'next-themes'
 const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
+
+function wikiHref(slug: string): string {
+  return `/wikis/${slug}`
+}
 
 function relativeTime(dateStr: string): string {
   const diff = Date.now() - new Date(dateStr).getTime()
@@ -42,6 +48,16 @@ export default function WikisPage() {
   const [creating, setCreating] = React.useState(false)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [name, setName] = React.useState('')
+  const [kind, setKind] = React.useState<'wiki' | 'course'>('wiki')
+  const [openingSlug, setOpeningSlug] = React.useState<string | null>(null)
+  const [, startNavigation] = React.useTransition()
+
+  const openWiki = React.useCallback((slug: string) => {
+    setOpeningSlug(slug)
+    startNavigation(() => {
+      router.push(wikiHref(slug))
+    })
+  }, [router])
 
   const handleQuickCreate = async () => {
     setCreating(true)
@@ -49,7 +65,7 @@ export default function WikisPage() {
       const email = user?.email || 'My'
       const displayName = email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1)
       const kb = await createKB(`${displayName}'s Wiki`)
-      router.push(`/wikis/${kb.slug}`)
+      openWiki(kb.slug)
     } catch (err) {
       console.error('Failed to create KB:', err)
     } finally {
@@ -61,14 +77,23 @@ export default function WikisPage() {
     if (!name.trim()) return
     setCreating(true)
     try {
-      const kb = await createKB(name.trim())
+      const kb = await createKB(name.trim(), undefined, kind)
       setDialogOpen(false)
       setName('')
-      router.push(`/wikis/${kb.slug}`)
+      setKind('wiki')
+      openWiki(kb.slug)
     } catch (err) {
       console.error('Failed to create KB:', err)
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleDialogOpenChange = (open: boolean) => {
+    setDialogOpen(open)
+    if (!open) {
+      setName('')
+      setKind('wiki')
     }
   }
 
@@ -186,9 +211,11 @@ export default function WikisPage() {
 
         <CreateWikiDialog
           open={dialogOpen}
-          onOpenChange={setDialogOpen}
+          onOpenChange={handleDialogOpenChange}
           name={name}
           onNameChange={setName}
+          kind={kind}
+          onKindChange={setKind}
           creating={creating}
           onCreate={handleCreate}
         />
@@ -207,6 +234,8 @@ export default function WikisPage() {
               const stats: string[] = []
               if (kb.source_count > 0) stats.push(`${kb.source_count} source${kb.source_count !== 1 ? 's' : ''}`)
               if (kb.wiki_page_count > 0) stats.push(`${kb.wiki_page_count} page${kb.wiki_page_count !== 1 ? 's' : ''}`)
+              const handleOpen = () => openWiki(kb.slug)
+              const isOpening = openingSlug === kb.slug
 
               return (
                 <motion.div
@@ -216,13 +245,22 @@ export default function WikisPage() {
                   transition={{ duration: 0.3, delay: index * 0.05, ease: [0.25, 0.1, 0.25, 1] }}
                   role="button"
                   tabIndex={0}
-                  onClick={() => router.push(`/wikis/${kb.slug}`)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') router.push(`/wikis/${kb.slug}`) }}
+                  onClick={handleOpen}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      handleOpen()
+                    }
+                  }}
                   className="flex flex-col items-start gap-3 p-5 rounded-xl border border-border bg-card hover:bg-accent/50 transition-colors cursor-pointer text-left group overflow-hidden"
                 >
                   <div className="flex items-center gap-3 min-w-0 w-full">
                     <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-muted group-hover:bg-accent transition-colors flex-shrink-0">
-                      <BookOpen size={16} className="text-muted-foreground group-hover:text-foreground transition-colors" />
+                      {isOpening ? (
+                        <Loader2 size={16} className="animate-spin text-muted-foreground" />
+                      ) : (
+                        <BookOpen size={16} className="text-muted-foreground group-hover:text-foreground transition-colors" />
+                      )}
                     </div>
                     <div className="min-w-0 flex-1">
                       <h2 className="text-sm font-medium text-foreground truncate">{kb.name}</h2>
@@ -258,9 +296,11 @@ export default function WikisPage() {
 
       <CreateWikiDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={handleDialogOpenChange}
         name={name}
         onNameChange={setName}
+        kind={kind}
+        onKindChange={setKind}
         creating={creating}
         onCreate={handleCreate}
       />
@@ -346,6 +386,8 @@ function CreateWikiDialog({
   onOpenChange,
   name,
   onNameChange,
+  kind,
+  onKindChange,
   creating,
   onCreate,
 }: {
@@ -353,31 +395,41 @@ function CreateWikiDialog({
   onOpenChange: (open: boolean) => void
   name: string
   onNameChange: (name: string) => void
+  kind: 'wiki' | 'course'
+  onKindChange: (kind: 'wiki' | 'course') => void
   creating: boolean
   onCreate: () => void
 }) {
+  const isCourse = kind === 'course'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create wiki</DialogTitle>
+          <DialogTitle>Create {isCourse ? 'course' : 'wiki'}</DialogTitle>
         </DialogHeader>
-        <input
+        <Input
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && onCreate()}
-          placeholder="My Research"
-          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+          placeholder={isCourse ? 'Intro to Reinforcement Learning' : 'My Research'}
           autoFocus
         />
-        <DialogFooter>
+        {isCourse && (
+          <p className="-mt-1 text-xs leading-relaxed text-muted-foreground">
+            A course presents your material as ordered lessons with progress tracking and resume, instead of a free-form wiki.
+          </p>
+        )}
+        <DialogFooter className="items-center gap-3 sm:justify-between">
           <button
-            onClick={onCreate}
-            disabled={creating || !name.trim()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 cursor-pointer"
+            type="button"
+            onClick={() => onKindChange(isCourse ? 'wiki' : 'course')}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           >
-            {creating ? 'Creating...' : 'Create'}
+            {isCourse ? 'Back to wiki' : 'Make this a course instead'}
           </button>
+          <Button onClick={onCreate} disabled={creating || !name.trim()}>
+            {creating ? 'Creating…' : `Create ${isCourse ? 'course' : 'wiki'}`}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

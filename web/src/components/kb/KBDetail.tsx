@@ -2,23 +2,38 @@
 
 import * as React from 'react'
 import { useSearchParams } from 'next/navigation'
+import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Upload as UploadIcon, BookOpen, ArrowUpRight, Loader2 } from 'lucide-react'
-import * as tus from 'tus-js-client'
 import { useUserStore, useUploadStore } from '@/stores'
 import { useKBDocuments } from '@/hooks/useKBDocuments'
 import { apiFetch } from '@/lib/api'
 import { toast } from 'sonner'
 import { KBSidenav } from '@/components/kb/KBSidenav'
-import { FilesGrid } from '@/components/kb/FilesGrid'
-import { GraphViewer } from '@/components/kb/GraphViewer'
 import { SelectionActionBar } from '@/components/kb/SelectionActionBar'
 import { WikiContent } from '@/components/wiki/WikiContent'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
-import type { ViewMode } from '@/app/(dashboard)/wikis/[slug]/[[...path]]/page'
+import type { ViewMode } from '@/components/kb/viewMode'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
+const FilesGrid = dynamic(() => import('@/components/kb/FilesGrid').then((mod) => mod.FilesGrid), {
+  ssr: false,
+  loading: () => <DetailPaneLoading />,
+})
+
+const GraphViewer = dynamic(() => import('@/components/kb/GraphViewer').then((mod) => mod.GraphViewer), {
+  ssr: false,
+  loading: () => <DetailPaneLoading />,
+})
+
+function DetailPaneLoading() {
+  return (
+    <div className="flex h-full items-center justify-center">
+      <Loader2 className="size-5 animate-spin text-muted-foreground" />
+    </div>
+  )
+}
 
 function buildTreeFromDocs(docs: DocumentListItem[]): WikiNode[] {
   const sorted = [...docs].sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
@@ -598,13 +613,14 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
     input.click()
   }
 
-  const tusUploadFile = React.useCallback((file: File, targetPath: string = '/'): Promise<void> => {
+  const tusUploadFile = React.useCallback(async (file: File, targetPath: string = '/'): Promise<void> => {
     const t = getToken()
     if (!t) return Promise.reject(new Error('Not authenticated'))
     const uploadId = crypto.randomUUID()
     addUpload({ id: uploadId, filename: file.name, kbId, kbSlug, path: targetPath })
+    const { Upload } = await import('tus-js-client')
     return new Promise((resolve, reject) => {
-      const upload = new tus.Upload(file, {
+      const upload = new Upload(file, {
         endpoint: `${API_URL}/v1/uploads`,
         retryDelays: [0, 1000, 3000, 5000],
         metadata: { filename: file.name, knowledge_base_id: kbId, path: targetPath },
@@ -787,7 +803,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
       </AnimatePresence>
 
       <div className="flex-1 overflow-hidden flex">
-        <div className="w-64 shrink-0">
+        <div className="w-[272px] shrink-0">
           <KBSidenav
             kbId={kbId}
             kbName={kbName}
@@ -883,6 +899,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
                 <WikiContent
                   content={pageContent}
                   title={pageTitle}
+                  path={wikiActivePath ?? undefined}
                   onNavigate={handleWikiNavigate}
                   onSourceClick={handleCitationSourceClick}
                   onGraphClick={handlePageGraphClick}

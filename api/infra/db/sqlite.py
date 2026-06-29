@@ -95,6 +95,10 @@ async def create_pool(db_path: str, init_schema: bool = True) -> aiosqlite.Conne
     if init_schema:
         schema = _SCHEMA_PATH.read_text(encoding='utf-8')
         await db.executescript(schema)
+        # No migration runner: add workspace.kind to pre-existing DBs.
+        cur = await db.execute("PRAGMA table_info(workspace)")
+        if "kind" not in {row[1] for row in await cur.fetchall()}:
+            await db.execute("ALTER TABLE workspace ADD COLUMN kind TEXT NOT NULL DEFAULT 'wiki'")
         await db.commit()
     return db
 

@@ -11,6 +11,102 @@ from tests.integration.mcp.conftest import TEST_USER_ID
 
 class TestWorkspace:
 
+    async def test_create_knowledge_base_initializes_empty_workspace(self, workspace):
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            instance = SqliteVaultFS(TEST_USER_ID)
+            kb = await instance.create_knowledge_base("Research Notes", "Test workspace")
+
+            assert kb["name"] == "Research Notes"
+            assert kb["slug"] == "Research Notes"
+            assert kb["already_exists"] is False
+            assert kb["local_singleton"] is True
+
+            docs = await instance.list_documents(kb["id"])
+            wiki_files = {doc["path"] + doc["filename"] for doc in docs}
+            assert "/wiki/overview.md" in wiki_files
+            assert "/wiki/log.md" in wiki_files
+            overview = await instance.get_document(kb["id"], "overview.md", "/wiki/")
+            assert overview["content"].startswith("---\n")
+            assert overview["tags"] == ["overview", "wiki"]
+            assert overview["date"]
+            assert (workspace / "wiki" / "overview.md").exists()
+            assert (workspace / "wiki" / "log.md").exists()
+        finally:
+            await SqliteVaultFS.close()
+
+    async def test_create_knowledge_base_returns_existing_local_workspace(self, fs):
+        instance, kb_id = fs
+        kb = await instance.create_knowledge_base("Another KB", "Should not create a second workspace")
+
+        assert kb["id"] == kb_id
+        assert kb["name"] == "test-workspace"
+        assert kb["slug"] == "test-workspace"
+        assert kb["already_exists"] is True
+        assert kb["local_singleton"] is True
+
+    async def test_scaffold_does_not_overwrite_existing_local_files(self, workspace):
+        """A rebuilt index (no workspace row) must not clobber real local files."""
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            (workspace / "wiki" / "overview.md").write_text("MY REAL NOTES", encoding="utf-8")
+            instance = SqliteVaultFS(TEST_USER_ID)
+            await instance.create_knowledge_base("Rebuilt", None)
+
+            # The existing overview is preserved; the missing log is still scaffolded.
+            assert (workspace / "wiki" / "overview.md").read_text(encoding="utf-8") == "MY REAL NOTES"
+            assert (workspace / "wiki" / "log.md").exists()
+        finally:
+            await SqliteVaultFS.close()
+
+    async def test_create_knowledge_base_defaults_to_wiki_kind(self, workspace):
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            instance = SqliteVaultFS(TEST_USER_ID)
+            await instance.create_knowledge_base("Plain Wiki", None)
+            cursor = await SqliteVaultFS._db_or_raise().execute("SELECT kind FROM workspace")
+            assert (await cursor.fetchone())[0] == "wiki"
+        finally:
+            await SqliteVaultFS.close()
+
+    async def test_create_knowledge_base_persists_course_kind(self, workspace):
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            instance = SqliteVaultFS(TEST_USER_ID)
+            await instance.create_knowledge_base("Intro Course", None, kind="course")
+            cursor = await SqliteVaultFS._db_or_raise().execute("SELECT kind FROM workspace")
+            assert (await cursor.fetchone())[0] == "course"
+        finally:
+            await SqliteVaultFS.close()
+
+    async def test_create_course_upgrades_existing_local_workspace(self, workspace):
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            instance = SqliteVaultFS(TEST_USER_ID)
+            await instance.create_knowledge_base("My Vault", None)
+            kb = await instance.create_knowledge_base("My Vault", None, kind="course")
+            assert kb["already_exists"] is True
+            assert kb["kind"] == "course"
+            cursor = await SqliteVaultFS._db_or_raise().execute("SELECT kind FROM workspace")
+            assert (await cursor.fetchone())[0] == "course"
+        finally:
+            await SqliteVaultFS.close()
+
     async def test_resolve_kb_returns_workspace(self, fs):
         instance, kb_id = fs
         kb = await instance.resolve_kb("test-workspace")

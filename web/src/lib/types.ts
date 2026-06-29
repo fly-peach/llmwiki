@@ -8,6 +8,7 @@ export interface KnowledgeBase {
   wiki_page_count: number
   created_at: string
   updated_at: string
+  kind?: 'wiki' | 'course'
 }
 
 export interface Document {
@@ -52,6 +53,9 @@ export interface WikiNode {
   path?: string
   docNumber?: number | null
   children?: WikiNode[]
+  // Course mode only — derived from the lesson doc's metadata.course.status + tree order.
+  status?: 'complete' | 'in_progress' | 'not_started'
+  locked?: boolean
 }
 
 export interface WikiSubsection {

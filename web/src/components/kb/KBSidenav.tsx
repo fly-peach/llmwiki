@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronRight, FileText, NotepadText, Library,
   Upload, BookOpen, ArrowUpRight, Search as SearchIcon,
-  Lightbulb, Box, ScrollText, Network, Folder,
+  Lightbulb, Box, ScrollText, Network, Folder, Check, Lock,
 } from 'lucide-react'
 import {
   CommandDialog, CommandInput, CommandList, CommandItem,
@@ -27,6 +27,12 @@ interface Usage {
   max_storage_bytes: number
 }
 
+// Only normalize all-lowercase names (file slugs); preserve intentional casing like "GRPO" or "LoRA".
+function toDisplayTitle(title: string): string {
+  if (title !== title.toLowerCase()) return title
+  return title.replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
 
 interface KBSidenavProps {
   kbId: string
@@ -43,6 +49,9 @@ interface KBSidenavProps {
   graphViewActive: boolean
   onGraphToggle: () => void
   onOpenSourceDoc: (docId: string) => void
+  courseMode?: boolean
+  courseCurrentPath?: string | null
+  courseProgress?: { completed: number; total: number }
 }
 
 export function KBSidenav({
@@ -60,6 +69,9 @@ export function KBSidenav({
   graphViewActive,
   onGraphToggle,
   onOpenSourceDoc,
+  courseMode = false,
+  courseCurrentPath = null,
+  courseProgress,
 }: KBSidenavProps) {
   const [searchOpen, setSearchOpen] = React.useState(false)
 
@@ -116,40 +128,58 @@ export function KBSidenav({
   return (
     <div className="h-full flex flex-col border-r border-border">
       {/* Wiki selector */}
-      <div className="shrink-0 px-2 pt-2 pb-1">
+      <div className="shrink-0 px-2 pt-2 pb-2">
         <WikiSelector kbId={kbId} kbName={kbName} />
       </div>
+
+      {courseMode && courseProgress && courseProgress.total > 0 && (
+        <div className="shrink-0 px-3 pb-2 -mt-1 flex items-center gap-2">
+          <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+            <div
+              className="h-full bg-foreground/30 transition-[width]"
+              style={{ width: `${Math.round((courseProgress.completed / courseProgress.total) * 100)}%` }}
+            />
+          </div>
+          <span className="text-[11px] text-muted-foreground/50 tabular-nums">
+            {courseProgress.completed}/{courseProgress.total}
+          </span>
+        </div>
+      )}
 
       {/* Search + Upload + Graph */}
       <div className="shrink-0 px-2 pb-1 flex items-center gap-1.5">
         <button
           onClick={() => setSearchOpen(true)}
           aria-label="Search pages and sources"
-          className="flex items-center gap-2 flex-1 px-2.5 py-1.5 text-xs text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-accent rounded-md transition-colors cursor-pointer"
+          className="flex items-center gap-2 flex-1 px-2.5 h-8 text-xs text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-accent rounded-md transition-colors cursor-pointer"
         >
           <SearchIcon className="size-3" />
           <span className="flex-1 text-left">Search</span>
           <kbd className="text-[10px] text-muted-foreground/30 bg-muted px-1 rounded">{isMac ? '⌘K' : 'Ctrl+K'}</kbd>
         </button>
-        <button
-          onClick={onGraphToggle}
-          className={cn(
-            'flex items-center justify-center px-2.5 py-1.5 border rounded-md transition-colors cursor-pointer',
-            graphViewActive
-              ? 'bg-accent text-foreground border-border'
-              : 'text-muted-foreground/50 hover:text-muted-foreground border-border hover:bg-accent',
-          )}
-          title="Knowledge graph"
-        >
-          <Network className="size-3" />
-        </button>
-        <button
-          onClick={onUpload}
-          className="flex items-center justify-center px-2.5 py-1.5 text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-accent rounded-md transition-colors cursor-pointer"
-          title="Upload files"
-        >
-          <Upload className="size-3" />
-        </button>
+        {!courseMode && (
+          <>
+            <button
+              onClick={onGraphToggle}
+              className={cn(
+                'flex items-center justify-center size-8 shrink-0 border rounded-md transition-colors cursor-pointer',
+                graphViewActive
+                  ? 'bg-accent text-foreground border-border'
+                  : 'text-muted-foreground/50 hover:text-muted-foreground border-border hover:bg-accent',
+              )}
+              title="Knowledge graph"
+            >
+              <Network className="size-3" />
+            </button>
+            <button
+              onClick={onUpload}
+              className="flex items-center justify-center size-8 shrink-0 text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-accent rounded-md transition-colors cursor-pointer"
+              title="Upload files"
+            >
+              <Upload className="size-3" />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Search palette */}
@@ -170,7 +200,7 @@ export function KBSidenav({
                   className="flex items-center"
                 >
                   <FileText className="size-3.5 mr-2 opacity-50 shrink-0" />
-                  <span className="truncate">{item.title}</span>
+                  <span className="truncate">{toDisplayTitle(item.title)}</span>
                   {item.tags.length > 0 && (
                     <span className="ml-auto flex items-center gap-1 shrink-0 pl-2">
                       {item.tags.slice(0, 3).map((tag) => (
@@ -225,27 +255,32 @@ export function KBSidenav({
         </CommandList>
       </CommandDialog>
 
-      {/* Wiki tree */}
-      <div className="flex-1 min-h-0 flex flex-col px-2 pt-1">
-        <div className="flex items-center px-2 mb-1 shrink-0">
-          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
-            Wiki
-          </span>
-        </div>
+      {/* Wiki tree — top-level folders render as sections; pages grouped beneath a guide */}
+      <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar px-2 pt-1.5">
         {loading ? (
           <SidenavSkeleton lines={3} />
         ) : hasWiki ? (
-          <div className="flex-1 overflow-y-auto no-scrollbar">
-            {wikiTree.map((node, i) => (
-              <WikiTreeNode
+          wikiTree.map((node, i) =>
+            node.children && node.children.length > 0 ? (
+              <WikiSection
                 key={node.path ?? node.title ?? i}
                 node={node}
-                depth={0}
                 activePath={wikiActivePath}
                 onNavigate={onWikiNavigate}
+                courseMode={courseMode}
+                currentPath={courseCurrentPath}
               />
-            ))}
-          </div>
+            ) : (
+              <WikiLeaf
+                key={node.path ?? node.title ?? i}
+                node={node}
+                activePath={wikiActivePath}
+                onNavigate={onWikiNavigate}
+                courseMode={courseMode}
+                currentPath={courseCurrentPath}
+              />
+            ),
+          )
         ) : (
           <div className="px-2 py-4 text-center">
             <BookOpen className="size-6 text-muted-foreground/20 mx-auto mb-2" />
@@ -323,20 +358,188 @@ function wikiNodeIcon(node: WikiNode, depth: number) {
   return <FileText className="size-3 shrink-0 opacity-50" />
 }
 
+// Course mode only — the only color in the app is the green completion check.
+function CourseGlyph({ node, current }: { node: WikiNode; current: boolean }) {
+  if (node.status === 'complete') return <Check className="size-3.5 text-emerald-500" />
+  if (node.locked) return <Lock className="size-3 text-muted-foreground/40" />
+  if (current) return <span className="size-1.5 rounded-full bg-foreground" />
+  return <span className="size-2.5 rounded-full border border-border" />
+}
+
+function WikiLeaf({
+  node,
+  activePath,
+  onNavigate,
+  courseMode = false,
+  currentPath = null,
+}: {
+  node: WikiNode
+  activePath: string | null
+  onNavigate: (path: string, docNumber?: number | null) => void
+  courseMode?: boolean
+  currentPath?: string | null
+}) {
+  const isActive = node.path != null && node.path === activePath
+  const locked = courseMode && !!node.locked
+  return (
+    <button
+      onClick={() => { if (locked) return; if (node.path) onNavigate(node.path, node.docNumber) }}
+      aria-disabled={locked}
+      title={locked ? 'Complete the previous lesson to unlock' : undefined}
+      className={cn(
+        'flex items-center gap-2.5 w-full text-left text-[13px] rounded-md px-2 py-1.5 transition-colors',
+        locked
+          ? 'text-muted-foreground/40 cursor-not-allowed'
+          : isActive ? 'cursor-pointer bg-accent text-foreground font-medium' : 'cursor-pointer text-muted-foreground hover:text-foreground hover:bg-accent/50',
+      )}
+    >
+      {courseMode
+        ? <span className="grid place-items-center size-4 shrink-0"><CourseGlyph node={node} current={node.path === currentPath} /></span>
+        : wikiNodeIcon(node, 0)}
+      <span className="truncate flex-1 min-w-0">{toDisplayTitle(node.title)}</span>
+    </button>
+  )
+}
+
+function WikiSectionItem({
+  node,
+  activePath,
+  onNavigate,
+  courseMode = false,
+  currentPath = null,
+}: {
+  node: WikiNode
+  activePath: string | null
+  onNavigate: (path: string, docNumber?: number | null) => void
+  courseMode?: boolean
+  currentPath?: string | null
+}) {
+  const isActive = node.path != null && node.path === activePath
+  const locked = courseMode && !!node.locked
+  return (
+    <button
+      onClick={() => { if (locked) return; if (node.path) onNavigate(node.path, node.docNumber) }}
+      aria-disabled={locked}
+      title={locked ? 'Complete the previous lesson to unlock' : undefined}
+      className={cn(
+        'relative block w-full text-left text-[13px] rounded-md pl-8 pr-2 py-1.5 truncate transition-colors',
+        locked
+          ? 'text-muted-foreground/40 cursor-not-allowed'
+          : isActive ? 'cursor-pointer bg-accent text-foreground font-medium' : 'cursor-pointer text-muted-foreground hover:text-foreground hover:bg-accent/50',
+      )}
+    >
+      {courseMode && (
+        <span className="absolute left-[7px] top-1/2 -translate-y-1/2 grid place-items-center size-4 rounded-full bg-background">
+          <CourseGlyph node={node} current={node.path === currentPath} />
+        </span>
+      )}
+      {toDisplayTitle(node.title)}
+    </button>
+  )
+}
+
+function nodeContainsPath(node: WikiNode, activePath: string | null): boolean {
+  if (activePath == null) return false
+  if (node.path === activePath) return true
+  return (node.children ?? []).some((c) => nodeContainsPath(c, activePath))
+}
+
+function WikiSection({
+  node,
+  activePath,
+  onNavigate,
+  courseMode = false,
+  currentPath = null,
+}: {
+  node: WikiNode
+  activePath: string | null
+  onNavigate: (path: string, docNumber?: number | null) => void
+  courseMode?: boolean
+  currentPath?: string | null
+}) {
+  const hasActiveChild = (node.children ?? []).some((c) => nodeContainsPath(c, activePath))
+  const [expanded, setExpanded] = React.useState(true)
+
+  React.useEffect(() => {
+    if (hasActiveChild) setExpanded(true)
+  }, [hasActiveChild])
+
+  return (
+    <div className="mt-3 first:mt-0">
+      <button
+        onClick={() => setExpanded((prev) => !prev)}
+        className="group w-full flex items-center gap-1 px-2 h-6 cursor-pointer"
+      >
+        <ChevronRight
+          className={cn(
+            'size-3 shrink-0 text-muted-foreground/30 group-hover:text-muted-foreground/60 transition-transform duration-150',
+            expanded && 'rotate-90',
+          )}
+        />
+        <span className="truncate text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50 group-hover:text-muted-foreground/70 transition-colors">
+          {toDisplayTitle(node.title)}
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {expanded && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.15, ease: [0.25, 0.1, 0.25, 1] }}
+            style={{ overflow: 'hidden' }}
+          >
+            <div className="relative mt-0.5">
+              <div className="absolute left-[15px] top-1 bottom-1 w-px bg-border" aria-hidden />
+              {node.children!.map((child, i) =>
+                child.children && child.children.length > 0 ? (
+                  <WikiTreeNode
+                    key={child.path ?? child.title ?? i}
+                    node={child}
+                    depth={1}
+                    activePath={activePath}
+                    onNavigate={onNavigate}
+                    courseMode={courseMode}
+                    currentPath={currentPath}
+                  />
+                ) : (
+                  <WikiSectionItem
+                    key={child.path ?? child.title ?? i}
+                    node={child}
+                    activePath={activePath}
+                    onNavigate={onNavigate}
+                    courseMode={courseMode}
+                    currentPath={currentPath}
+                  />
+                ),
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function WikiTreeNode({
   node,
   depth,
   activePath,
   onNavigate,
+  courseMode = false,
+  currentPath = null,
 }: {
   node: WikiNode
   depth: number
   activePath: string | null
   onNavigate: (path: string, docNumber?: number | null) => void
+  courseMode?: boolean
+  currentPath?: string | null
 }) {
   const hasChildren = node.children && node.children.length > 0
   const isActive = node.path != null && node.path === activePath
   const hasActiveChild = hasChildren && node.children!.some((c) => c.path === activePath)
+  const locked = courseMode && !!node.locked
   const [expanded, setExpanded] = React.useState(true)
 
   React.useEffect(() => {
@@ -347,13 +550,17 @@ function WikiTreeNode({
     <div>
       <div
         className={cn(
-          'flex items-center gap-1.5 w-full text-left text-[13px] rounded-md px-2 py-1.5 transition-colors cursor-pointer',
-          isActive
-            ? 'bg-accent text-foreground font-medium'
-            : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+          'flex items-center gap-1.5 w-full text-left text-[13px] rounded-md px-2 py-1.5 transition-colors',
+          locked
+            ? 'text-muted-foreground/40 cursor-not-allowed'
+            : isActive
+              ? 'cursor-pointer bg-accent text-foreground font-medium'
+              : 'cursor-pointer text-muted-foreground hover:text-foreground hover:bg-accent/50',
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
+        title={locked ? 'Complete the previous lesson to unlock' : undefined}
         onClick={() => {
+          if (locked) return
           if (node.path) {
             onNavigate(node.path, node.docNumber)
           } else if (hasChildren) {
@@ -377,8 +584,10 @@ function WikiTreeNode({
         ) : (
           <span className="w-3.5" />
         )}
-        {wikiNodeIcon(node, depth)}
-        <span className="truncate flex-1 min-w-0">{node.title}</span>
+        {courseMode && node.path
+          ? <span className="grid place-items-center size-4 shrink-0"><CourseGlyph node={node} current={node.path === currentPath} /></span>
+          : wikiNodeIcon(node, depth)}
+        <span className="truncate flex-1 min-w-0">{toDisplayTitle(node.title)}</span>
       </div>
       <AnimatePresence initial={false}>
         {hasChildren && expanded && (
@@ -397,6 +606,8 @@ function WikiTreeNode({
                 depth={depth + 1}
                 activePath={activePath}
                 onNavigate={onNavigate}
+                courseMode={courseMode}
+                currentPath={currentPath}
               />
             ))}
           </motion.div>
