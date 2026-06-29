@@ -9,6 +9,10 @@ import { useKBDocuments } from '@/hooks/useKBDocuments'
 import { apiFetch } from '@/lib/api'
 import { useUserStore } from '@/stores'
 import type { DocumentListItem, WikiNode } from '@/lib/types'
+import {
+  enrichTreeWithProgress, findCurrentLesson, flattenLessons, lessonStatus,
+} from '@/lib/wikiTree'
+import { useCourseProgress } from '@/hooks/useCourseProgress'
 
 function buildTreeFromDocs(docs: DocumentListItem[]): WikiNode[] {
   const sorted = [...docs].sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999))
@@ -103,15 +107,19 @@ export function WikiOnlyDetail({
   kbId,
   kbSlug,
   kbName,
+  kbKind = 'wiki',
 }: {
   kbId: string
   kbSlug: string
   kbName: string
+  kbKind?: 'wiki' | 'course'
 }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const token = useUserStore((s) => s.accessToken)
-  const { documents, loading } = useKBDocuments(kbId)
+  const { documents, setDocuments, loading } = useKBDocuments(kbId)
+  const courseMode = kbKind === 'course'
+  const { markComplete } = useCourseProgress(setDocuments)
 
   const updateParam = React.useCallback((key: string, value: string | null) => {
     const url = new URL(window.location.href)
@@ -204,6 +212,56 @@ export function WikiOnlyDetail({
   const activeWikiVersion = activeWikiDoc?.version ?? -1
   const activeWikiDocId = activeWikiDoc?.id ?? null
 
+  // ─── Course progress (derived from the lessons' metadata.course.status) ─────
+  const displayTree = React.useMemo(
+    () => (courseMode ? enrichTreeWithProgress(wikiTree, wikiDocs) : wikiTree),
+    [courseMode, wikiTree, wikiDocs],
+  )
+  const lessons = React.useMemo(() => (courseMode ? flattenLessons(displayTree) : []), [courseMode, displayTree])
+  const completedCount = React.useMemo(() => lessons.filter((l) => l.status === 'complete').length, [lessons])
+  const currentLessonPath = React.useMemo(
+    () => (courseMode ? findCurrentLesson(displayTree)?.path ?? null : null),
+    [courseMode, displayTree],
+  )
+  const overviewLesson = React.useMemo(() => {
+    if (!courseMode) return null
+    const doc = wikiDocs.find((d) => (d.path + d.filename).replace(/^\/wiki\/?/, '') === 'overview.md')
+    return doc ? { title: doc.title || 'Overview', path: 'overview.md' } : null
+  }, [courseMode, wikiDocs])
+
+  const activeLessonIdx = React.useMemo(
+    () => (courseMode && wikiActivePath ? lessons.findIndex((l) => l.path === wikiActivePath) : -1),
+    [courseMode, wikiActivePath, lessons],
+  )
+
+  const courseView: 'overview' | 'lesson' | null = React.useMemo(() => {
+    if (!courseMode) return null
+    if (wikiActivePath === 'overview.md') return 'overview'
+    return activeLessonIdx >= 0 ? 'lesson' : null
+  }, [courseMode, wikiActivePath, activeLessonIdx])
+
+  const prevLesson = React.useMemo(() => {
+    if (activeLessonIdx < 0) return null
+    if (activeLessonIdx > 0) {
+      const l = lessons[activeLessonIdx - 1]
+      return l.path ? { title: l.title, path: l.path } : null
+    }
+    return overviewLesson
+  }, [activeLessonIdx, lessons, overviewLesson])
+
+  // The forward control: the next lesson, or "Finish" on the last lesson (returns to the hub).
+  const forward = React.useMemo(() => {
+    if (activeLessonIdx < 0) return null
+    const next = lessons[activeLessonIdx + 1]
+    return { label: next?.title ?? 'Finish', path: next?.path ?? 'overview.md' }
+  }, [activeLessonIdx, lessons])
+
+  const resumeLesson = React.useMemo(() => {
+    if (!courseMode) return null
+    const target = findCurrentLesson(displayTree) ?? lessons[0] ?? null
+    return target?.path ? { title: target.title, path: target.path } : null
+  }, [courseMode, displayTree, lessons])
+
   React.useEffect(() => {
     if (!wikiActivePath || !token) {
       setPageLoadedPath(null)
@@ -244,6 +302,17 @@ export function WikiOnlyDetail({
     lastWikiDocNumberRef.current = num
     if (num != null) updateParam('p', String(num))
   }, [updateParam, wikiDocs])
+
+  // Advancing completes the current lesson (if not already) and moves to the next.
+  const handleForward = React.useCallback(() => {
+    if (!forward) return
+    // Never complete a still-locked lesson (reachable only via search/deep link) — it would corrupt the sequence.
+    const current = activeLessonIdx >= 0 ? lessons[activeLessonIdx] : null
+    if (activeWikiDoc && current && !current.locked && lessonStatus(activeWikiDoc) !== 'complete') {
+      markComplete(activeWikiDoc.id)
+    }
+    handleWikiSelect(forward.path)
+  }, [forward, activeLessonIdx, lessons, activeWikiDoc, markComplete, handleWikiSelect])
 
   const wikiPathSet = React.useMemo(() => {
     const set = new Set<string>()
@@ -304,7 +373,7 @@ export function WikiOnlyDetail({
           <KBSidenav
             kbId={kbId}
             kbName={kbName}
-            wikiTree={wikiTree}
+            wikiTree={displayTree}
             wikiActivePath={wikiActivePath}
             onWikiNavigate={handleWikiSelect}
             sourceDocs={sourceDocs}
@@ -319,6 +388,9 @@ export function WikiOnlyDetail({
               const doc = documents.find((d) => d.id === docId)
               if (doc) openSourceDoc(doc)
             }}
+            courseMode={courseMode}
+            courseCurrentPath={currentLessonPath}
+            courseProgress={courseMode ? { completed: completedCount, total: lessons.length } : undefined}
           />
         </div>
         <div className="min-w-0 flex-1">
@@ -335,6 +407,16 @@ export function WikiOnlyDetail({
               onSourceClick={handleCitationSourceClick}
               onGraphClick={() => router.push(`/wikis/${kbSlug}/graph`)}
               documents={documents}
+              courseMode={courseMode}
+              courseView={courseView}
+              isComplete={lessonStatus(activeWikiDoc) === 'complete'}
+              prevLesson={prevLesson}
+              forwardLabel={forward?.label ?? null}
+              onForward={handleForward}
+              resumeLesson={resumeLesson}
+              onLessonNavigate={handleWikiSelect}
+              lessonsTotal={lessons.length}
+              lessonsComplete={completedCount}
             />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-4 px-6">

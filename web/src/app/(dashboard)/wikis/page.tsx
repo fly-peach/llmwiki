@@ -10,6 +10,8 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Button } from '@/components/ui/button'
 import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator,
@@ -46,6 +48,7 @@ export default function WikisPage() {
   const [creating, setCreating] = React.useState(false)
   const [dialogOpen, setDialogOpen] = React.useState(false)
   const [name, setName] = React.useState('')
+  const [kind, setKind] = React.useState<'wiki' | 'course'>('wiki')
   const [openingSlug, setOpeningSlug] = React.useState<string | null>(null)
   const [, startNavigation] = React.useTransition()
 
@@ -74,14 +77,23 @@ export default function WikisPage() {
     if (!name.trim()) return
     setCreating(true)
     try {
-      const kb = await createKB(name.trim())
+      const kb = await createKB(name.trim(), undefined, kind)
       setDialogOpen(false)
       setName('')
+      setKind('wiki')
       openWiki(kb.slug)
     } catch (err) {
       console.error('Failed to create KB:', err)
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleDialogOpenChange = (open: boolean) => {
+    setDialogOpen(open)
+    if (!open) {
+      setName('')
+      setKind('wiki')
     }
   }
 
@@ -199,9 +211,11 @@ export default function WikisPage() {
 
         <CreateWikiDialog
           open={dialogOpen}
-          onOpenChange={setDialogOpen}
+          onOpenChange={handleDialogOpenChange}
           name={name}
           onNameChange={setName}
+          kind={kind}
+          onKindChange={setKind}
           creating={creating}
           onCreate={handleCreate}
         />
@@ -282,9 +296,11 @@ export default function WikisPage() {
 
       <CreateWikiDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={handleDialogOpenChange}
         name={name}
         onNameChange={setName}
+        kind={kind}
+        onKindChange={setKind}
         creating={creating}
         onCreate={handleCreate}
       />
@@ -370,6 +386,8 @@ function CreateWikiDialog({
   onOpenChange,
   name,
   onNameChange,
+  kind,
+  onKindChange,
   creating,
   onCreate,
 }: {
@@ -377,31 +395,41 @@ function CreateWikiDialog({
   onOpenChange: (open: boolean) => void
   name: string
   onNameChange: (name: string) => void
+  kind: 'wiki' | 'course'
+  onKindChange: (kind: 'wiki' | 'course') => void
   creating: boolean
   onCreate: () => void
 }) {
+  const isCourse = kind === 'course'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create wiki</DialogTitle>
+          <DialogTitle>Create {isCourse ? 'course' : 'wiki'}</DialogTitle>
         </DialogHeader>
-        <input
+        <Input
           value={name}
           onChange={(e) => onNameChange(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && onCreate()}
-          placeholder="My Research"
-          className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm"
+          placeholder={isCourse ? 'Intro to Reinforcement Learning' : 'My Research'}
           autoFocus
         />
-        <DialogFooter>
+        {isCourse && (
+          <p className="-mt-1 text-xs leading-relaxed text-muted-foreground">
+            A course presents your material as ordered lessons with progress tracking and resume, instead of a free-form wiki.
+          </p>
+        )}
+        <DialogFooter className="items-center gap-3 sm:justify-between">
           <button
-            onClick={onCreate}
-            disabled={creating || !name.trim()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 cursor-pointer"
+            type="button"
+            onClick={() => onKindChange(isCourse ? 'wiki' : 'course')}
+            className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
           >
-            {creating ? 'Creating...' : 'Create'}
+            {isCourse ? 'Back to wiki' : 'Make this a course instead'}
           </button>
+          <Button onClick={onCreate} disabled={creating || !name.trim()}>
+            {creating ? 'Creating…' : `Create ${isCourse ? 'course' : 'wiki'}`}
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

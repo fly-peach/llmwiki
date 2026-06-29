@@ -82,8 +82,8 @@ class PostgresVaultFS(VaultFS):
             self.user_id,
         )
 
-    async def create_knowledge_base(self, name: str, description: str | None = None) -> dict:
-        row = await self._insert_knowledge_base(name, description)
+    async def create_knowledge_base(self, name: str, description: str | None = None, kind: str = "wiki") -> dict:
+        row = await self._insert_knowledge_base(name, description, kind)
         await self._scaffold_wiki(str(row["id"]), row["name"])
         return row
 
@@ -393,7 +393,7 @@ class PostgresVaultFS(VaultFS):
             kb_id, self.user_id,
         )
 
-    async def _insert_knowledge_base(self, name: str, description: str | None) -> dict:
+    async def _insert_knowledge_base(self, name: str, description: str | None, kind: str = "wiki") -> dict:
         pool = await get_pool()
         async with pool.acquire() as conn:
             current_name = name
@@ -401,10 +401,10 @@ class PostgresVaultFS(VaultFS):
                 slug = await self._unique_slug(current_name, conn)
                 try:
                     row = await conn.fetchrow(
-                        "INSERT INTO knowledge_bases (user_id, name, slug, description) "
-                        "VALUES ($1, $2, $3, $4) "
-                        "RETURNING id, user_id, name, slug, description, created_at, updated_at",
-                        self.user_id, current_name, slug, description,
+                        "INSERT INTO knowledge_bases (user_id, name, slug, description, kind) "
+                        "VALUES ($1, $2, $3, $4, $5) "
+                        "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
+                        self.user_id, current_name, slug, description, kind,
                     )
                     return dict(row)
                 except asyncpg.UniqueViolationError:

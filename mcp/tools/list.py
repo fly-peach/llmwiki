@@ -10,7 +10,9 @@ def register(mcp: FastMCP, get_user_id, fs_factory) -> None:
     @mcp.tool(
         name="create_knowledge_base",
         description=(
-            "Create a new knowledge base/wiki and scaffold starter overview/log pages.\n\n"
+            "Create a new knowledge base and scaffold starter overview/log pages.\n\n"
+            "Set kind='course' to create a course instead of a wiki — same structure, but the "
+            "app renders lesson progress (mark-complete, current/locked lessons). Default 'wiki'.\n\n"
             "In hosted mode this creates a separate knowledge base with a unique slug. "
             "In local MCP mode there is one workspace per server, so this returns the "
             "existing workspace if it has already been initialized."
@@ -20,6 +22,7 @@ def register(mcp: FastMCP, get_user_id, fs_factory) -> None:
         ctx: Context,
         name: str,
         description: str = "",
+        kind: str = "wiki",
     ) -> str:
         name = name.strip()
         description = description.strip()
@@ -27,22 +30,26 @@ def register(mcp: FastMCP, get_user_id, fs_factory) -> None:
             return "Error: name is required when creating a knowledge base."
         if len(name) > 120:
             return "Error: knowledge base name must be 120 characters or fewer."
+        if kind not in ("wiki", "course"):
+            return "Error: kind must be 'wiki' or 'course'."
 
         user_id = get_user_id(ctx)
         fs = fs_factory(user_id)
-        kb = await fs.create_knowledge_base(name, description or None)
+        kb = await fs.create_knowledge_base(name, description or None, kind)
 
         if kb.get("already_exists"):
             if kb.get("local_singleton"):
+                label = "course" if kb.get("kind") == "course" else "knowledge base"
                 return (
                     "Local MCP mode uses one workspace per server. "
-                    f"Existing knowledge base: **{kb['name']}** (`{kb['slug']}`). "
+                    f"Existing {label}: **{kb['name']}** (`{kb['slug']}`). "
                     "Use that slug with the other tools."
                 )
             return f"Knowledge base already exists: **{kb['name']}** (`{kb['slug']}`)."
 
+        label = "course" if kind == "course" else "knowledge base"
         return (
-            f"Created knowledge base **{kb['name']}** (`{kb['slug']}`). "
+            f"Created {label} **{kb['name']}** (`{kb['slug']}`). "
             "Starter pages were added at `/wiki/overview.md` and `/wiki/log.md`. "
             f"Use `knowledge_base=\"{kb['slug']}\"` with the other tools."
         )

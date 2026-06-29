@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS workspace (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     description TEXT DEFAULT '',
+    kind TEXT NOT NULL DEFAULT 'wiki',
     user_id TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now')),
     UNIQUE(user_id)

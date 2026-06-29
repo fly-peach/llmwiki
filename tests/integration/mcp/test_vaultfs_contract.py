@@ -65,6 +65,48 @@ class TestWorkspace:
         finally:
             await SqliteVaultFS.close()
 
+    async def test_create_knowledge_base_defaults_to_wiki_kind(self, workspace):
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            instance = SqliteVaultFS(TEST_USER_ID)
+            await instance.create_knowledge_base("Plain Wiki", None)
+            cursor = await SqliteVaultFS._db_or_raise().execute("SELECT kind FROM workspace")
+            assert (await cursor.fetchone())[0] == "wiki"
+        finally:
+            await SqliteVaultFS.close()
+
+    async def test_create_knowledge_base_persists_course_kind(self, workspace):
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            instance = SqliteVaultFS(TEST_USER_ID)
+            await instance.create_knowledge_base("Intro Course", None, kind="course")
+            cursor = await SqliteVaultFS._db_or_raise().execute("SELECT kind FROM workspace")
+            assert (await cursor.fetchone())[0] == "course"
+        finally:
+            await SqliteVaultFS.close()
+
+    async def test_create_course_upgrades_existing_local_workspace(self, workspace):
+        from vaultfs.sqlite import SqliteVaultFS
+
+        await SqliteVaultFS.close()
+        await SqliteVaultFS.init(str(workspace))
+        try:
+            instance = SqliteVaultFS(TEST_USER_ID)
+            await instance.create_knowledge_base("My Vault", None)
+            kb = await instance.create_knowledge_base("My Vault", None, kind="course")
+            assert kb["already_exists"] is True
+            assert kb["kind"] == "course"
+            cursor = await SqliteVaultFS._db_or_raise().execute("SELECT kind FROM workspace")
+            assert (await cursor.fetchone())[0] == "course"
+        finally:
+            await SqliteVaultFS.close()
+
     async def test_resolve_kb_returns_workspace(self, fs):
         instance, kb_id = fs
         kb = await instance.resolve_kb("test-workspace")

@@ -67,6 +67,7 @@ export default function KBPage() {
       kbId={kb.id}
       kbSlug={kb.slug}
       kbName={kb.name}
+      kbKind={kb.kind}
     />
   )
 }

@@ -62,6 +62,7 @@ CREATE TABLE knowledge_bases (
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
     description TEXT,
+    kind TEXT NOT NULL DEFAULT 'wiki' CHECK (kind IN ('wiki', 'course')),
     created_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT now() NOT NULL,
     UNIQUE(user_id, slug),

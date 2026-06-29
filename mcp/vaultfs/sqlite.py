@@ -131,23 +131,27 @@ class SqliteVaultFS(VaultFS):
         )
         return _rows_to_dicts(cursor, await cursor.fetchall())
 
-    async def create_knowledge_base(self, name: str, description: str | None = None) -> dict:
+    async def create_knowledge_base(self, name: str, description: str | None = None, kind: str = "wiki") -> dict:
         """Create the local singleton workspace, or return it if already initialized."""
         db = self._db_or_raise()
         cursor = await db.execute(
-            "SELECT id, name, name as slug, description, created_at FROM workspace LIMIT 1",
+            "SELECT id, name, name as slug, description, kind, created_at FROM workspace LIMIT 1",
         )
         row = await cursor.fetchone()
         if row:
             existing = _rows_to_dicts(cursor, [row])[0]
+            if kind == "course" and existing["kind"] != "course":
+                await db.execute("UPDATE workspace SET kind = ? WHERE id = ?", ("course", existing["id"]))
+                await db.commit()
+                existing["kind"] = "course"
             existing["already_exists"] = True
             existing["local_singleton"] = True
             return existing
 
         ws_id = str(uuid.uuid4())
         await db.execute(
-            "INSERT INTO workspace (id, name, description, user_id) VALUES (?, ?, ?, ?)",
-            (ws_id, name, description or "", self.user_id),
+            "INSERT INTO workspace (id, name, description, kind, user_id) VALUES (?, ?, ?, ?, ?)",
+            (ws_id, name, description or "", kind, self.user_id),
         )
         await db.commit()
 

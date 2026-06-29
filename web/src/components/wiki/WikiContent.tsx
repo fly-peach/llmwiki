@@ -9,7 +9,7 @@ import rehypeKatex from 'rehype-katex'
 import 'katex/dist/katex.min.css'
 import type { Components } from 'react-markdown'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { FileText, Copy, Check, Network } from 'lucide-react'
+import { FileText, Copy, Check, Network, ChevronLeft, ChevronRight, ArrowRight } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { apiFetch } from '@/lib/api'
 import { useUserStore } from '@/stores'
@@ -415,9 +415,24 @@ interface WikiContentProps {
   onSourceClick?: (filename: string, page?: number) => void
   onGraphClick?: () => void
   documents?: DocumentListItem[]
+  courseMode?: boolean
+  courseView?: 'overview' | 'lesson' | null
+  isComplete?: boolean
+  prevLesson?: LessonLink | null
+  forwardLabel?: string | null
+  onForward?: () => void
+  resumeLesson?: LessonLink | null
+  onLessonNavigate?: (path: string) => void
+  lessonsTotal?: number
+  lessonsComplete?: number
 }
 
-export function WikiContent({ content, title, path, onNavigate, onSourceClick, onGraphClick, documents }: WikiContentProps) {
+interface LessonLink {
+  title: string
+  path: string
+}
+
+export function WikiContent({ content, title, path, onNavigate, onSourceClick, onGraphClick, documents, courseMode = false, courseView = null, isComplete = false, prevLesson = null, forwardLabel = null, onForward, resumeLesson = null, onLessonNavigate, lessonsTotal = 0, lessonsComplete = 0 }: WikiContentProps) {
   const body = React.useMemo(() => stripFrontmatter(content), [content])
   const description = React.useMemo(() => parseFrontmatterField(content, 'description'), [content])
   const { heading, rest: processedContent } = React.useMemo(() => extractLeadingH1(body), [body])
@@ -797,6 +812,57 @@ export function WikiContent({ content, title, path, onNavigate, onSourceClick, o
                 {processedContent}
               </ReactMarkdown>
             </div>
+            {courseMode && courseView === 'overview' && resumeLesson && (
+              <div className="mt-12 pt-6 border-t border-border flex items-center justify-between gap-4">
+                <div className="text-[13px] text-muted-foreground">
+                  {lessonsComplete > 0
+                    ? `${lessonsComplete} of ${lessonsTotal} lessons complete`
+                    : `${lessonsTotal} ${lessonsTotal === 1 ? 'lesson' : 'lessons'}`}
+                </div>
+                <button
+                  onClick={() => onLessonNavigate?.(resumeLesson.path)}
+                  className="inline-flex items-center gap-2 rounded-md bg-foreground text-background font-semibold text-[13px] px-4 py-2 hover:opacity-90 transition-opacity cursor-pointer"
+                >
+                  {lessonsTotal > 0 && lessonsComplete >= lessonsTotal ? 'Review course' : lessonsComplete > 0 ? 'Continue' : 'Start course'}
+                  <ArrowRight className="size-4" />
+                </button>
+              </div>
+            )}
+            {courseMode && courseView === 'lesson' && (
+              <div className="mt-12 pt-5 border-t border-border flex items-center justify-between gap-4">
+                {prevLesson ? (
+                  <button
+                    onClick={() => onLessonNavigate?.(prevLesson.path)}
+                    className="flex items-center gap-1.5 min-w-0 text-[13px] text-muted-foreground/60 hover:text-foreground transition-colors cursor-pointer"
+                    title={`Previous: ${prevLesson.title}`}
+                  >
+                    <ChevronLeft className="size-4 shrink-0" />
+                    <span className="truncate max-w-[160px]">{prevLesson.title}</span>
+                  </button>
+                ) : (
+                  <span className="w-6" />
+                )}
+                {isComplete ? (
+                  <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-emerald-600 dark:text-emerald-400">
+                    <Check className="size-3.5" />Completed
+                  </span>
+                ) : (
+                  <span />
+                )}
+                {forwardLabel ? (
+                  <button
+                    onClick={onForward}
+                    className="flex items-center justify-end gap-1.5 min-w-0 text-[13px] font-medium text-foreground/80 hover:text-foreground transition-colors cursor-pointer"
+                    title={`Next: ${forwardLabel}`}
+                  >
+                    <span className="truncate max-w-[160px]">{forwardLabel}</span>
+                    <ChevronRight className="size-4 shrink-0" />
+                  </button>
+                ) : (
+                  <span className="w-6" />
+                )}
+              </div>
+            )}
           </div>
 
           {/* Right sidebar — "On this page" ToC */}

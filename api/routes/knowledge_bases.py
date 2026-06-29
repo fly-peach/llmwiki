@@ -25,14 +25,14 @@ async def get_knowledge_base(kb_id: UUID, service: Annotated[KBService, Depends(
 
 @router.post("", status_code=201)
 async def create_knowledge_base(body: CreateKB, service: Annotated[KBService, Depends(get_kb_service)]):
-    return await service.create(body.name, body.description)
+    return await service.create(body.name, body.description, body.kind)
 
 
 @router.patch("/{kb_id}")
 async def update_knowledge_base(kb_id: UUID, body: UpdateKB, service: Annotated[KBService, Depends(get_kb_service)]):
-    if not body.name and not body.description:
+    if not body.name and not body.description and not body.kind:
         raise HTTPException(status_code=400, detail="No fields to update")
-    row = await service.update(str(kb_id), body.name, body.description)
+    row = await service.update(str(kb_id), body.name, body.description, body.kind)
     if not row:
         raise HTTPException(status_code=404, detail="Knowledge base not found")
     return row

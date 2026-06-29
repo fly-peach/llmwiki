@@ -67,7 +67,7 @@ class HostedUserService(UserService):
 
 
 _KB_LIST_QUERY = (
-    "SELECT kb.id, kb.user_id, kb.name, kb.slug, kb.description, "
+    "SELECT kb.id, kb.user_id, kb.name, kb.slug, kb.description, kb.kind, "
     "kb.created_at, kb.updated_at, "
     "(SELECT COUNT(*) FROM documents d WHERE d.knowledge_base_id = kb.id AND d.path NOT LIKE '/wiki/%' AND NOT d.archived AND COALESCE((d.metadata->>'hidden')::boolean, false) = false) AS source_count, "
     "(SELECT COUNT(*) FROM documents d WHERE d.knowledge_base_id = kb.id AND d.path LIKE '/wiki/%' AND NOT d.archived) AS wiki_page_count "
@@ -129,28 +129,30 @@ class HostedKBService(KBService):
         )
         return dict(row) if row else None
 
-    async def create(self, name: str, description: str | None) -> dict:
+    async def create(self, name: str, description: str | None, kind: str | None = None) -> dict:
         await self._check_capacity()
         slug = await self._unique_slug(name)
-        row = await self._insert_kb(name, slug, description)
+        row = await self._insert_kb(name, slug, description, kind or "wiki")
         await self._scaffold_wiki(row["id"], name)
         return dict(row)
 
-    async def update(self, kb_id: str, name: str | None, description: str | None) -> dict | None:
+    async def update(self, kb_id: str, name: str | None, description: str | None, kind: str | None = None) -> dict | None:
         if name is not None:
             slug = await self._unique_slug(name)
             row = await self.pool.fetchrow(
-                "UPDATE knowledge_bases SET name = $1, slug = $2, description = COALESCE($3, description), updated_at = now() "
-                "WHERE id = $4 AND user_id = $5 "
-                "RETURNING id, user_id, name, slug, description, created_at, updated_at",
-                name, slug, description, kb_id, self.user_id,
+                "UPDATE knowledge_bases SET name = $1, slug = $2, description = COALESCE($3, description), "
+                "kind = COALESCE($4, kind), updated_at = now() "
+                "WHERE id = $5 AND user_id = $6 "
+                "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
+                name, slug, description, kind, kb_id, self.user_id,
             )
         else:
             row = await self.pool.fetchrow(
-                "UPDATE knowledge_bases SET description = $1, updated_at = now() "
-                "WHERE id = $2 AND user_id = $3 "
-                "RETURNING id, user_id, name, slug, description, created_at, updated_at",
-                description, kb_id, self.user_id,
+                "UPDATE knowledge_bases SET description = COALESCE($1, description), "
+                "kind = COALESCE($2, kind), updated_at = now() "
+                "WHERE id = $3 AND user_id = $4 "
+                "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
+                description, kind, kb_id, self.user_id,
             )
         return dict(row) if row else None
 
@@ -159,7 +161,7 @@ class HostedKBService(KBService):
         if user_count and user_count >= settings.GLOBAL_MAX_USERS:
             raise HTTPException(status_code=503, detail="We've reached our user capacity for now. Please try again later.")
 
-    async def _insert_kb(self, name: str, slug: str, description: str | None) -> dict:
+    async def _insert_kb(self, name: str, slug: str, description: str | None, kind: str = "wiki") -> dict:
         conn = await self.pool.acquire()
         try:
             async with conn.transaction():
@@ -167,10 +169,10 @@ class HostedKBService(KBService):
                 for attempt in range(10):
                     try:
                         row = await conn.fetchrow(
-                            "INSERT INTO knowledge_bases (user_id, name, slug, description) "
-                            "VALUES ($1, $2, $3, $4) "
-                            "RETURNING id, user_id, name, slug, description, created_at, updated_at",
-                            self.user_id, current_name, slug, description,
+                            "INSERT INTO knowledge_bases (user_id, name, slug, description, kind) "
+                            "VALUES ($1, $2, $3, $4, $5) "
+                            "RETURNING id, user_id, name, slug, description, kind, created_at, updated_at",
+                            self.user_id, current_name, slug, description, kind,
                         )
                         return dict(row)
                     except asyncpg.UniqueViolationError:

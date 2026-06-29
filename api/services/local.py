@@ -59,7 +59,7 @@ class LocalKBService(KBService):
 
     async def list(self) -> list[dict]:
         cursor = await self.db.execute(
-            "SELECT w.id, w.user_id, w.name, w.name as slug, w.description, "
+            "SELECT w.id, w.user_id, w.name, w.name as slug, w.description, w.kind, "
             "w.created_at, w.created_at as updated_at, "
             "(SELECT count(*) FROM documents WHERE source_kind = 'source' AND status != 'failed') as source_count, "
             "(SELECT count(*) FROM documents WHERE source_kind = 'wiki' AND status != 'failed') as wiki_page_count "
@@ -73,13 +73,16 @@ class LocalKBService(KBService):
         kbs = await self.list()
         return kbs[0] if kbs else None
 
-    async def create(self, name: str, description: str | None) -> dict:
+    async def create(self, name: str, description: str | None, kind: str | None = None) -> dict:
         kbs = await self.list()
         if kbs:
-            return kbs[0]
+            existing = kbs[0]
+            if kind == "course" and existing["kind"] != "course":
+                return await self.update(existing["id"], None, None, "course")
+            return existing
         raise HTTPException(status_code=400, detail="No workspace initialized")
 
-    async def update(self, kb_id: str, name: str | None, description: str | None) -> dict | None:
+    async def update(self, kb_id: str, name: str | None, description: str | None, kind: str | None = None) -> dict | None:
         sets = []
         params = []
         if name is not None:
@@ -88,6 +91,9 @@ class LocalKBService(KBService):
         if description is not None:
             sets.append("description = ?")
             params.append(description)
+        if kind is not None:
+            sets.append("kind = ?")
+            params.append(kind)
         if not sets:
             return None
         params.append(kb_id)
