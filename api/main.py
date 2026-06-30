@@ -29,94 +29,54 @@ from routes.knowledge_bases import router as knowledge_bases_router
 from routes.documents import router as documents_router
 from routes.me import router as me_router
 from routes.usage import router as usage_router
+from routes.workspaces import router as workspaces_router
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    db = await _local_lifespan_inner(app)
     from pathlib import Path
-    from infra.db.sqlite import create_pool as create_sqlite_pool
-    workspace = Path(app.state.workspace_path)
-    db_path = str(workspace / ".llmwiki" / "index.db")
+    from infra.workspace_manager import WorkspaceManager
+    from infra import workspace_registry
 
-    # Each background writer gets its own connection so a commit can't flush
-    # another writer's (or a request handler's) open transaction.
-    reconcile_db = await create_sqlite_pool(db_path, init_schema=False)
-    watcher_db = await create_sqlite_pool(db_path, init_schema=False)
+    local_user_id = await _local_lifespan_inner(app)
 
-    from domain.local_processor import reconcile_workspace
-    reconcile_task = asyncio.create_task(reconcile_workspace(reconcile_db, workspace))
+    # Pick the initial workspace: the registry's last-active folder, falling
+    # back to the env-configured WORKSPACE_PATH.
+    workspace_registry.ensure_initialized(settings.WORKSPACE_PATH)
+    active = workspace_registry.get_active() or settings.WORKSPACE_PATH
+    initial_ws = Path(active).resolve()
 
-    watcher_task = None
-    try:
-        from domain.watcher import watch_workspace
-        watcher_task = asyncio.create_task(watch_workspace(watcher_db, workspace))
-        logger.info("File watcher started")
-    except ImportError:
-        logger.warning("watchfiles not installed — file watcher disabled")
+    mgr = WorkspaceManager(app, settings.API_URL)
+    app.state.workspace_manager = mgr
+    await mgr.open(initial_ws)
 
     try:
         yield
     finally:
-        reconcile_task.cancel()
-        try:
-            await reconcile_task
-        except asyncio.CancelledError:
-            pass
-        if watcher_task:
-            watcher_task.cancel()
-            try:
-                await watcher_task
-            except asyncio.CancelledError:
-                pass
-        await reconcile_db.close()
-        await watcher_db.close()
-        await db.close()
+        await mgr.shutdown()
 
 
 async def _local_lifespan_inner(app: FastAPI):
-    """Local mode: SQLite + local filesystem + single-user auth."""
+    """Local mode: set up single-user auth. DB/storage/tasks are handled by
+    WorkspaceManager once the initial workspace is opened."""
     import uuid
-    from pathlib import Path
-    from infra.db.sqlite import create_pool as create_sqlite_pool
-    from infra.storage.local import LocalStorageService
     from infra.auth.local import LocalAuthProvider
-
-    workspace = Path(settings.WORKSPACE_PATH).resolve()
-    workspace.mkdir(parents=True, exist_ok=True)
-    (workspace / "wiki").mkdir(exist_ok=True)
-    (workspace / ".llmwiki").mkdir(exist_ok=True)
-    (workspace / ".llmwiki" / "cache").mkdir(exist_ok=True)
-
-    db_path = str(workspace / ".llmwiki" / "index.db")
-    db = await create_sqlite_pool(db_path)
 
     local_user_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, "local"))
     auth_provider = LocalAuthProvider(local_user_id)
-    storage = LocalStorageService(str(workspace), settings.API_URL)
-
-    # Ensure workspace row exists
-    cursor = await db.execute("SELECT id FROM workspace LIMIT 1")
-    if not await cursor.fetchone():
-        ws_id = str(uuid.uuid4())
-        await db.execute(
-            "INSERT INTO workspace (id, name, description, user_id) VALUES (?, ?, '', ?)",
-            (ws_id, workspace.name, local_user_id),
-        )
-        await db.commit()
-        logger.info("Initialized local workspace: %s", workspace)
 
     app.state.mode = "local"
-    app.state.sqlite_db = db
-    app.state.storage_service = storage
     app.state.auth_provider = auth_provider
-    app.state.workspace_path = str(workspace)
+    # These are populated by WorkspaceManager.open(), but are referenced by
+    # request handlers; declare them up front so attribute access never errors
+    # during the brief window before open() completes.
+    app.state.sqlite_db = None
+    app.state.storage_service = None
+    app.state.factory = None
+    app.state.workspace_path = settings.WORKSPACE_PATH
 
-    from services.local import LocalServiceFactory
-    app.state.factory = LocalServiceFactory(db, storage, local_user_id)
-
-    logger.info("Local mode — workspace: %s", workspace)
-    return db
+    logger.info("Local mode — initial workspace: %s", settings.WORKSPACE_PATH)
+    return local_user_id
 
 
 app = FastAPI(title="LLM Wiki API", lifespan=lifespan)
@@ -138,6 +98,7 @@ app.include_router(me_router)
 app.include_router(usage_router)
 app.include_router(knowledge_bases_router)
 app.include_router(documents_router)
+app.include_router(workspaces_router)
 
 from routes.local_upload import router as local_upload_router
 from routes.files import router as files_router, set_workspace_root
