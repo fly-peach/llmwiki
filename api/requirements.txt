@@ -13,6 +13,7 @@ lxml==6.1.0
 opendataloader-pdf==2.3.0
 aiosqlite==0.22.1
 watchfiles==1.1.0
+python-dotenv==1.0.1
 # Pinned to override vulnerable transitive resolutions.
 aiohttp==3.14.1
 cryptography==48.0.1

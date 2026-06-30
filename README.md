@@ -6,12 +6,11 @@
 
 </div>
 
-LLM Wiki transforms your scattered reading and research into a persistent, AI-maintained second brain. Capture documents, notes, and web clippings as you work, and deploy a nightly Claude Routine to autonomously synthesize those sources into a permanent knowledge base. Because the clipper captures your highlights and margin notes alongside the source, the wiki becomes a record of not just what you read but what you *thought* about it — one that compounds over months and years, long after the original context would have faded. This architecture is heavily inspired by [Andrej Karpathy's LLM Wiki concept](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), with an increased emphasis on autonomous maintenance.
+LLM Wiki transforms your scattered reading and research into a persistent, AI-maintained second brain. Capture documents, notes, and web clippings as you work, and deploy a nightly Claude Routine to autonomously synthesize those sources into a permanent knowledge base. Because the clipper captures your highlights and margin notes alongside the source, the wiki becomes a record of not just what you read but what you _thought_ about it — one that compounds over months and years, long after the original context would have faded. This architecture is heavily inspired by [Andrej Karpathy's LLM Wiki concept](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f), with an increased emphasis on autonomous maintenance.
 
 <p align="center">
   <img src="wiki-page.png" alt="LLM Wiki — a compiled wiki page with citations and table of contents" width="820" />
 </p>
-
 
 LLM Wiki is designed to work at three distinct scales:
 
@@ -42,8 +41,15 @@ Here's how to get started.
 ```bash
 git clone https://github.com/lucasastorian/llmwiki.git
 cd llmwiki
-python -m venv .venv && source .venv/bin/activate
-pip install -r api/requirements.txt -r mcp/requirements.txt
+
+# Conda 方式 (推荐)
+conda env create -f environment.yml
+conda activate llmwiki
+
+# 或者使用 venv + pip
+# python -m venv .venv && source .venv/bin/activate
+# pip install -r api/requirements.txt -r mcp/requirements.txt
+
 cd web && npm install && cd ..
 ```
 
@@ -61,13 +67,13 @@ This initializes the workspace, indexes the folder, starts the API and web app, 
 ./llmwiki mcp-config ~/research
 ```
 
-Paste the printed JSON into `claude_desktop_config.json` (Claude Desktop) or `.claude/settings.json` (Claude Code). One workspace is one MCP server entry, so add one per folder. Then tell Claude: *"Read the guide, then ingest my sources and start building the wiki."*
+Paste the printed JSON into `claude_desktop_config.json` (Claude Desktop) or `.claude/settings.json` (Claude Code). One workspace is one MCP server entry, so add one per folder. Then tell Claude: _"Read the guide, then ingest my sources and start building the wiki."_
 
 **4. Make it self-maintaining.** Set up a Claude Routine — a scheduled prompt that runs on its own — so Claude refreshes the wiki without you having to remember to. Each run, it reads whatever's new in the workspace since last time (uploads, notes, and clips and highlights from the Chrome extension) and updates the pages those sources touch. You curate the sources; the wiki keeps itself current.
 
 A routine prompt that works well:
 
-> *Read the guide. Find everything added to the workspace since your last run — new sources, clips, and highlights. For each one, read it and update the wiki: write new pages where they're warranted, fold new material into existing pages, and fix any cross-references or citations it affects. Append a short note to `wiki/log.md` summarizing what changed.*
+> _Read the guide. Find everything added to the workspace since your last run — new sources, clips, and highlights. For each one, read it and update the wiki: write new pages where they're warranted, fold new material into existing pages, and fix any cross-references or citations it affects. Append a short note to `wiki/log.md` summarizing what changed._
 
 Then schedule that prompt to run nightly. [Claude Code Routines](https://code.claude.com/docs/en/routines) run it on Anthropic's cloud on a fixed cadence even when your laptop is closed — create one at [claude.ai/code/routines](https://claude.ai/code/routines), with `/schedule` in the CLI, or from Claude Cowork — while a [Desktop scheduled task](https://code.claude.com/docs/en/desktop-scheduled-tasks) runs the same prompt on your own machine. Either way the wiki compounds: a year from now you can open it and read back the ideas you were working through a year ago.
 
@@ -85,14 +91,14 @@ The extension talks to your running workspace at `http://localhost:8000` — so 
 
 # Supported files
 
-| Type | Formats | How it's handled |
-|------|---------|------------------|
-| PDF | `.pdf` | Text and figures extracted locally. Set `MISTRAL_API_KEY` for higher-quality OCR on tables and complex layouts. |
-| Office | `.docx` `.doc` `.pptx` `.ppt` | Converted with LibreOffice, then extracted — requires a local LibreOffice install. |
-| Spreadsheets | `.xlsx` `.xls` | Extracted sheet by sheet. |
-| Web pages | `.html` `.htm` | Cleaned to readable Markdown, stripping nav and ads. |
-| Text & data | `.md` `.txt` `.csv` `.json` `.xml` `.yaml` `.svg`, and more | Indexed and chunked directly. |
-| Images | `.png` `.jpg` `.webp` `.gif` | Stored and viewable inline; Claude can read them when asked. |
+| Type         | Formats                                                     | How it's handled                                                                                                |
+| ------------ | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| PDF          | `.pdf`                                                      | Text and figures extracted locally. Set `MISTRAL_API_KEY` for higher-quality OCR on tables and complex layouts. |
+| Office       | `.docx` `.doc` `.pptx` `.ppt`                               | Converted with LibreOffice, then extracted — requires a local LibreOffice install.                              |
+| Spreadsheets | `.xlsx` `.xls`                                              | Extracted sheet by sheet.                                                                                       |
+| Web pages    | `.html` `.htm`                                              | Cleaned to readable Markdown, stripping nav and ads.                                                            |
+| Text & data  | `.md` `.txt` `.csv` `.json` `.xml` `.yaml` `.svg`, and more | Indexed and chunked directly.                                                                                   |
+| Images       | `.png` `.jpg` `.webp` `.gif`                                | Stored and viewable inline; Claude can read them when asked.                                                    |
 
 # What happens on disk
 
@@ -122,18 +128,18 @@ The filesystem is the source of truth; the index just makes it fast to search. A
 
 Once connected over MCP, Claude works the wiki through a small, deliberate set of tools:
 
-| Tool | What it does |
-|------|--------------|
-| `guide` | Orients Claude — how the vault works and which knowledge bases exist. It calls this first. |
+| Tool                    | What it does                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `guide`                 | Orients Claude — how the vault works and which knowledge bases exist. It calls this first.                                      |
 | `create_knowledge_base` | Creates a knowledge base and starter wiki pages (`overview.md`, `log.md`); local mode returns the existing singleton workspace. |
-| `list_knowledge_bases` | Lists your knowledge bases and their slugs (every other tool takes one). |
-| `search` | Browse files, full-text search across content, or query the citation graph — what cites what, plus stale or uncited pages. |
-| `read` | Read documents — a single file or a glob batch, PDF/office page ranges, optionally with embedded images. |
-| `create` | Create a wiki page, note, or asset (SVG diagram, CSV) with footnote citations back to sources. |
-| `edit` | Find-and-replace exact text in an existing page. |
-| `append` | Add content to the end of a page. |
-| `delete` | Remove pages or sources by path or glob (`overview.md` and `log.md` are protected). |
-| `lint` | Deterministic hygiene checks — citation resolution, dangling links, orphan and stale pages, frontmatter consistency. |
+| `list_knowledge_bases`  | Lists your knowledge bases and their slugs (every other tool takes one).                                                        |
+| `search`                | Browse files, full-text search across content, or query the citation graph — what cites what, plus stale or uncited pages.      |
+| `read`                  | Read documents — a single file or a glob batch, PDF/office page ranges, optionally with embedded images.                        |
+| `create`                | Create a wiki page, note, or asset (SVG diagram, CSV) with footnote citations back to sources.                                  |
+| `edit`                  | Find-and-replace exact text in an existing page.                                                                                |
+| `append`                | Add content to the end of a page.                                                                                               |
+| `delete`                | Remove pages or sources by path or glob (`overview.md` and `log.md` are protected).                                             |
+| `lint`                  | Deterministic hygiene checks — citation resolution, dangling links, orphan and stale pages, frontmatter consistency.            |
 
 Writes go to the source of truth first — a file on disk — then the search index updates. So when Claude creates `/wiki/concepts/attention.md`, it's a real file immediately, not a pending change.
 

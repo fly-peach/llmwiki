@@ -6,14 +6,15 @@
 
 ## 一、环境要求
 
-| 组件 | 版本要求 | 说明 |
-|------|---------|------|
-| Conda | Miniconda 或 Anaconda 均可 | 用于管理 Python 环境 |
-| Python | 3.11+ | 由 conda 创建,无需系统预装 |
-| Node.js | 20+ | 用于 Web 前端 |
-| npm 或 pnpm | 任一 | 装 Web 依赖 |
+| 组件        | 版本要求                   | 说明                       |
+| ----------- | -------------------------- | -------------------------- |
+| Conda       | Miniconda 或 Anaconda 均可 | 用于管理 Python 环境       |
+| Python      | 3.11+                      | 由 conda 创建,无需系统预装 |
+| Node.js     | 20+                        | 用于 Web 前端              |
+| npm 或 pnpm | 任一                       | 装 Web 依赖                |
 
 **可选依赖:**
+
 - [LibreOffice](https://www.libreoffice.org/):抽取 Word / PowerPoint 文档内容(不装则跳过这两类文件)
 - `MISTRAL_API_KEY`:更高质量的 PDF OCR(尤其表格、复杂版式)。不配置则用本地 opendataloader 抽取 PDF。
 
@@ -31,15 +32,12 @@ cd llmwiki
 ### 2. 创建 Conda 环境并安装 Python 依赖
 
 ```powershell
-# 创建独立的 Python 环境(3.12)
-conda create -n llmwiki python=3.12 -y
+# 从 environment.yml 一键创建环境(自动安装所有依赖)
+conda env create -f environment.yml
 conda activate llmwiki
-
-# 安装 API 和 MCP 的 Python 依赖
-pip install -r api\requirements.txt -r mcp\requirements.txt
 ```
 
-> **说明:** 本项目依赖都是纯 Python 包(fastapi、aiosqlite、pydantic 等),用 `pip install` 配合 `requirements.txt` 安装最直接、版本最准。Conda 在这里主要负责管理 Python 解释器版本。
+> **说明:** `environment.yml` 统一管理所有 Python 依赖，优先从 conda-forge 通道安装，少数 conda-forge 上不可用的包（如 `opendataloader-pdf`、`mcp`）通过 pip 自动安装。如需更新环境，运行 `conda env update -f environment.yml`。
 
 ### 3. 安装 Web 前端依赖
 
@@ -65,12 +63,53 @@ python llmwiki open C:\llmwiki-ws
 > **workspace 路径建议放在本地磁盘**(如 `C:\llmwiki-ws`),不要放在网络映射驱动器上——文件监听器(watchfiles)和 SQLite 在网络盘上可能不灵敏或出现锁问题。
 
 这条命令会依次完成:
+
 1. 在 workspace 下创建 `wiki\`(wiki 页面)和 `.llmwiki\`(SQLite 索引 + 缓存)
 2. 索引该文件夹中已有的文件
 3. 启动 API 服务(`http://localhost:8000`)
 4. 启动 Web 服务(`http://localhost:3000`)并自动打开浏览器
 
 启动后访问 **http://localhost:3000/wikis** 即可看到你的 wiki(初始包含 `overview.md`)。
+
+### 自定义端口
+
+有两种方式配置端口:
+
+#### 方式一: 使用 .env 文件(推荐)
+
+项目根目录已经创建了 `.env` 文件,直接编辑即可:
+
+```env
+# LLM Wiki Configuration
+API_PORT=8001
+WEB_PORT=3000
+```
+
+然后直接运行:
+
+```powershell
+conda activate llmwiki
+python llmwiki open C:\llmwiki-ws
+```
+
+#### 方式二: 使用环境变量
+
+```powershell
+# Windows PowerShell
+$env:API_PORT = "8001"
+$env:WEB_PORT = "3001"
+python llmwiki open C:\llmwiki-ws
+```
+
+```cmd
+# Windows CMD
+set API_PORT=8001
+set WEB_PORT=3001
+python llmwiki open C:\llmwiki-ws
+```
+
+- `API_PORT`: 后端 API 服务端口(默认 8000)
+- `WEB_PORT`: 前端 Web 服务端口(默认 3000)
 
 ---
 
@@ -82,14 +121,14 @@ python llmwiki open C:\llmwiki-ws
 
 把文件丢进 workspace 文件夹即可,后台 watcher 会自动索引。支持的格式:
 
-| 类型 | 格式 | 处理方式 |
-|------|------|---------|
-| PDF | `.pdf` | 本地抽取文本和图片;配 `MISTRAL_API_KEY` 可提升表格/复杂版式 OCR 质量 |
-| Office | `.docx` `.doc` `.pptx` `.ppt` | 需本地安装 LibreOffice 转换后抽取 |
-| 表格 | `.xlsx` `.xls` | 按表抽取 |
-| 网页 | `.html` `.htm` | 清理为可读 Markdown,去掉导航和广告 |
-| 文本/数据 | `.md` `.txt` `.csv` `.json` `.xml` `.yaml` `.svg` 等 | 直接索引切块 |
-| 图片 | `.png` `.jpg` `.webp` `.gif` | 存储、内联查看,Claude 可读 |
+| 类型      | 格式                                                 | 处理方式                                                             |
+| --------- | ---------------------------------------------------- | -------------------------------------------------------------------- |
+| PDF       | `.pdf`                                               | 本地抽取文本和图片;配 `MISTRAL_API_KEY` 可提升表格/复杂版式 OCR 质量 |
+| Office    | `.docx` `.doc` `.pptx` `.ppt`                        | 需本地安装 LibreOffice 转换后抽取                                    |
+| 表格      | `.xlsx` `.xls`                                       | 按表抽取                                                             |
+| 网页      | `.html` `.htm`                                       | 清理为可读 Markdown,去掉导航和广告                                   |
+| 文本/数据 | `.md` `.txt` `.csv` `.json` `.xml` `.yaml` `.svg` 等 | 直接索引切块                                                         |
+| 图片      | `.png` `.jpg` `.webp` `.gif`                         | 存储、内联查看,Claude 可读                                           |
 
 ### 2. Chrome 扩展剪藏
 
@@ -121,18 +160,20 @@ python llmwiki mcp-config C:\llmwiki-ws
 ```
 
 > Windows 上建议把 `command` 改成 `python` + 脚本完整路径的形式,例如:
+>
 > ```json
 > "command": "E:\\wangtong\\apps\\anaconda\\envs\\llmwiki\\python.exe",
 > "args": ["Z:\\DataApp\\llmwiki\\llmwiki", "mcp", "C:\\llmwiki-ws"]
 > ```
+>
 > 直接指向 conda 环境里的 python,避免 Claude Desktop 找不到正确的解释器。
 
 ### 2. 粘贴到对应配置文件
 
-| 客户端 | 配置文件位置 |
-|--------|-------------|
+| 客户端         | 配置文件位置                                                                                              |
+| -------------- | --------------------------------------------------------------------------------------------------------- |
 | Claude Desktop | `claude_desktop_config.json`(macOS: `~/Library/Application Support/Claude/`;Windows: `%APPDATA%\Claude\`) |
-| Claude Code | 项目或全局的 `.claude/settings.json` |
+| Claude Code    | 项目或全局的 `.claude/settings.json`                                                                      |
 
 每个 workspace 对应一个 MCP server 条目,多个文件夹就加多条。
 
@@ -140,7 +181,7 @@ python llmwiki mcp-config C:\llmwiki-ws
 
 对 Claude 说:
 
-> *Read the guide, then ingest my sources and start building the wiki.*
+> _Read the guide, then ingest my sources and start building the wiki._
 
 Claude 会先调用 `guide` 工具了解工作流,然后 `read` 你的源文件、`create`/`edit` wiki 页面、用脚注引用回源文件,并自动维护引用图。
 
@@ -171,44 +212,53 @@ C:\llmwiki-ws\                # 你的 workspace
 
 ## 七、常用命令
 
-| 命令 | 作用 |
-|------|------|
-| `python llmwiki open <workspace>` | 初始化(若需要)+ 启动服务 + 开浏览器 |
-| `python llmwiki init <workspace>` | 仅初始化:建 `wiki\` + `.llmwiki\`,索引文件 |
-| `python llmwiki serve <workspace>` | 仅启动 API + Web(不重新初始化) |
-| `python llmwiki mcp <workspace>` | 启动 stdio MCP server(供 Claude 连接) |
-| `python llmwiki mcp-config <workspace>` | 打印 Claude MCP 配置 JSON |
-| `python llmwiki reindex <workspace>` | 强制全量重建 `index.db` |
+| 命令                                    | 作用                                       |
+| --------------------------------------- | ------------------------------------------ |
+| `python llmwiki open <workspace>`       | 初始化(若需要)+ 启动服务 + 开浏览器        |
+| `python llmwiki init <workspace>`       | 仅初始化:建 `wiki\` + `.llmwiki\`,索引文件 |
+| `python llmwiki serve <workspace>`      | 仅启动 API + Web(不重新初始化)             |
+| `python llmwiki mcp <workspace>`        | 启动 stdio MCP server(供 Claude 连接)      |
+| `python llmwiki mcp-config <workspace>` | 打印 Claude MCP 配置 JSON                  |
+| `python llmwiki reindex <workspace>`    | 强制全量重建 `index.db`                    |
 
 ---
 
 ## 八、故障排查
 
 ### 1. `pnpm install` 报 symlink 错误
+
 项目放在网络映射驱动器(如 NAS、`\\server\share`)上时常见。改用 `npm install` 即可。
 
 ### 2. 改了文件但 wiki 没更新
+
 网络驱动器上文件 watcher 可能不灵敏。手动跑一次重建:
+
 ```powershell
 python llmwiki reindex C:\llmwiki-ws
 ```
 
 ### 3. SQLite 索引损坏 / 想重置
+
 直接删掉 `.llmwiki\index.db`,然后:
+
 ```powershell
 python llmwiki reindex C:\llmwiki-ws
 ```
+
 源文件和 wiki 页面都不会丢。
 
 ### 4. Claude Desktop 连不上 MCP
+
 - 确认配置里 `command` 指向 conda 环境的 `python.exe`,而不是系统 python
 - 确认 `args` 里 workspace 路径正确(Windows 用双反斜杠 `\\`)
 - 重启 Claude Desktop
 
 ### 5. Word / PPT 无法抽取
+
 需要本地安装 LibreOffice。装好后重跑 `reindex`。
 
 ### 6. 端口被占用
+
 - API 默认 `8000`,Web 默认 `3000`。被占用时停掉占用进程,或修改 `llmwiki` 脚本里对应的 `--port`。
 
 ---

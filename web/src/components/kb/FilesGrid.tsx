@@ -18,6 +18,7 @@ import {
   DropdownMenuSubTrigger, DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
+import { useI18n } from '@/lib/i18n'
 import { NoteEditor } from '@/components/editor/NoteEditor'
 import { NoteFormattingButtons } from '@/components/editor/NoteToolbar'
 import type { Editor } from '@tiptap/react'
@@ -178,6 +179,7 @@ export function FilesGrid({
   onDocOpen,
   onDocClose,
 }: FilesGridProps) {
+  const { t } = useI18n()
   // Navigation state
   const [currentPath, setCurrentPath] = React.useState(initialPath ?? '/')
   const [history, setHistory] = React.useState<string[]>([initialPath ?? '/'])
@@ -372,7 +374,7 @@ export function FilesGrid({
     onUploadFiles?.(files, targetPath)
   }, [onUploadFiles])
 
-  const sortLabels: Record<SortField, string> = { name: 'Name', date: 'Modified', type: 'Kind' }
+  const sortLabels: Record<SortField, string> = { name: t('common.name'), date: t('common.modified'), type: t('common.kind') }
   const isEmpty = filteredFolders.length === 0 && filteredDocs.length === 0
 
   return (
@@ -388,8 +390,8 @@ export function FilesGrid({
         <div className="absolute inset-0 z-40 bg-background/80 backdrop-blur-sm flex items-center justify-center pointer-events-none">
           <div className="flex flex-col items-center gap-3 border-2 border-dashed border-primary rounded-xl px-12 py-10">
             <Upload className="size-8 text-primary" />
-            <p className="text-sm font-medium text-primary">Drop files to upload</p>
-            <p className="text-xs text-muted-foreground">to {currentPath === '/' ? 'Files' : currentPath.replace(/\/$/, '').split('/').pop()}</p>
+            <p className="text-sm font-medium text-primary">{t('common.dropFilesToUpload')}</p>
+            <p className="text-xs text-muted-foreground">to {currentPath === '/' ? t('files.all') : currentPath.replace(/\/$/, '').split('/').pop()}</p>
           </div>
         </div>
       )}
@@ -435,7 +437,7 @@ export function FilesGrid({
                       setNoteTitle(e.target.value)
                       noteTitleChangeRef.current?.(e.target.value)
                     }}
-                    placeholder="Untitled"
+                    placeholder={t('common.untitled')}
                     className="min-w-[80px] flex-1 text-sm font-medium text-foreground bg-transparent border-none outline-none placeholder:text-muted-foreground/30 truncate"
                   />
                 ) : isDocLeaf ? (
@@ -480,7 +482,7 @@ export function FilesGrid({
                   <input
                     ref={searchInputRef}
                     type="text"
-                    placeholder="Filter..."
+                    placeholder={t('common.filter')}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Escape') { setSearchQuery(''); setSearchOpen(false) } }}
@@ -499,13 +501,13 @@ export function FilesGrid({
 
             <button onClick={handleUploadHere} className="flex items-center gap-1.5 p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer">
               <Upload className="size-3.5" />
-              <span className="text-xs">Upload</span>
+              <span className="text-xs">{t('common.upload')}</span>
             </button>
 
             <button
               onClick={() => setSortDir((d) => d === 'asc' ? 'desc' : 'asc')}
               className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer"
-              title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+              title={sortDir === 'asc' ? t('common.ascending') : t('common.descending')}
             >
               {sortDir === 'asc' ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />}
             </button>
@@ -523,13 +525,13 @@ export function FilesGrid({
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleCreateNoteHere}>
                   <NotepadText className="size-3.5 mr-2" />
-                  New Note
+                  {t('common.new')} {t('common.note')}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuSub>
                   <DropdownMenuSubTrigger>
                     {sortDir === 'asc' ? <ArrowUp className="size-3.5 mr-2" /> : <ArrowDown className="size-3.5 mr-2" />}
-                    Sort by {sortLabels[sortField]}
+                    {t('common.sortBy')} {sortLabels[sortField]}
                   </DropdownMenuSubTrigger>
                   <DropdownMenuSubContent>
                     {(Object.keys(sortLabels) as SortField[]).map((field) => (
@@ -554,12 +556,12 @@ export function FilesGrid({
               <button
                 onClick={() => window.open(activeSourceUrl, '_blank', 'noopener,noreferrer')}
                 className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer"
-                title="Open source URL"
+                title={t('common.openSourceUrl')}
               >
                 <ExternalLink className="size-3.5" />
               </button>
             )}
-            <button onClick={closeDoc} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Close">
+            <button onClick={closeDoc} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title={t('common.close')}>
               <X className="size-3.5" />
             </button>
           </>
@@ -569,24 +571,24 @@ export function FilesGrid({
               <button
                 onClick={() => window.open(activeSourceUrl, '_blank', 'noopener,noreferrer')}
                 className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer"
-                title="Open source URL"
+                title={t('common.openSourceUrl')}
               >
                 <ExternalLink className="size-3.5" />
               </button>
             )}
-            <button onClick={closeDoc} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Close">
+            <button onClick={closeDoc} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title={t('common.close')}>
               <X className="size-3.5" />
             </button>
           </>
         ) : activeDoc ? (
           <>
-            <button onClick={() => { /* TODO: trigger search in PDF viewer */ }} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Find in document">
+            <button onClick={() => { /* TODO: trigger search in PDF viewer */ }} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title={t('common.findInDocument')}>
               <Search className="size-3.5" />
             </button>
-            <a href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/v1/documents/${activeDoc.id}/download`} download className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Download">
+            <a href={`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/v1/documents/${activeDoc.id}/download`} download className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title={t('common.download')}>
               <Download className="size-3.5" />
             </a>
-            <button onClick={closeDoc} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title="Close">
+            <button onClick={closeDoc} className="p-1.5 text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer" title={t('common.close')}>
               <X className="size-3.5" />
             </button>
           </>
@@ -631,13 +633,13 @@ export function FilesGrid({
             <ContextMenuTrigger asChild>
               <div className="h-full overflow-y-auto p-4">
                 {isEmpty ? (
-                  <EmptyState isRoot={currentPath === '/'} onUpload={handleUploadHere} onCreateNote={handleCreateNoteHere} />
+                  <EmptyState isRoot={currentPath === '/'} onUpload={handleUploadHere} onCreateNote={handleCreateNoteHere} t={t} />
                 ) : (
                   <div className="min-h-full">
                     <div className="grid grid-cols-4 sm:grid-cols-5 lg:grid-cols-6 xl:grid-cols-8 gap-3">
                       <AnimatePresence initial={false} mode="popLayout">
                         <motion.div key="add-new" layout transition={{ layout: { duration: 0.15, ease: 'easeOut' } }} className="h-full">
-                          <NewCard onCreateNote={handleCreateNoteHere} onUpload={handleUploadHere} onCreateFolder={() => setFolderDialogOpen(true)} />
+                          <NewCard onCreateNote={handleCreateNoteHere} onUpload={handleUploadHere} onCreateFolder={() => setFolderDialogOpen(true)} t={t} />
                         </motion.div>
                         {filteredFolders.map((folder) => (
                           <motion.div key={`folder-${folder.path}`} layout exit={{ opacity: 0, scale: 0.95 }} transition={{ layout: { duration: 0.15, ease: 'easeOut' }, opacity: { duration: 0.1 } }} className="h-full">
@@ -652,7 +654,7 @@ export function FilesGrid({
                         ))}
                         {filteredDocs.map((doc) => (
                           <motion.div key={doc.id} layout exit={{ opacity: 0, scale: 0.95 }} transition={{ layout: { duration: 0.15, ease: 'easeOut' }, opacity: { duration: 0.1 } }} className="h-full">
-                            <DocumentCard doc={doc} onOpen={() => openDoc(doc)} onDelete={() => onDeleteDocument(doc.id)} onRename={(t) => onRenameDocument(doc.id, t)} />
+                            <DocumentCard doc={doc} onOpen={() => openDoc(doc)} onDelete={() => onDeleteDocument(doc.id)} onRename={(newTitle) => onRenameDocument(doc.id, newTitle)} t={t} />
                           </motion.div>
                         ))}
                       </AnimatePresence>
@@ -662,10 +664,10 @@ export function FilesGrid({
               </div>
             </ContextMenuTrigger>
             <ContextMenuContent>
-              <ContextMenuItem onClick={handleCreateNoteHere}><NotepadText className="size-3.5 mr-2" />New Note</ContextMenuItem>
-              <ContextMenuItem onClick={() => setFolderDialogOpen(true)}><FolderPlus className="size-3.5 mr-2" />新建文件夹</ContextMenuItem>
+              <ContextMenuItem onClick={handleCreateNoteHere}><NotepadText className="size-3.5 mr-2" />{t('common.new')} {t('common.note')}</ContextMenuItem>
+              <ContextMenuItem onClick={() => setFolderDialogOpen(true)}><FolderPlus className="size-3.5 mr-2" />{t('files.newFolder')}</ContextMenuItem>
               <ContextMenuSeparator />
-              <ContextMenuItem onClick={handleUploadHere}><Upload className="size-3.5 mr-2" />Upload Files</ContextMenuItem>
+              <ContextMenuItem onClick={handleUploadHere}><Upload className="size-3.5 mr-2" />{t('files.uploadFiles')}</ContextMenuItem>
             </ContextMenuContent>
           </ContextMenu>
         )}
@@ -675,11 +677,11 @@ export function FilesGrid({
       {folderDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setFolderDialogOpen(false)}>
           <div className="bg-background border border-border rounded-lg p-6 w-80 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-medium mb-3">新建文件夹</h3>
-            <input value={folderName} onChange={(e) => setFolderName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()} placeholder="Folder name" className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm mb-3" autoFocus />
+            <h3 className="text-sm font-medium mb-3">{t('files.newFolder')}</h3>
+            <input value={folderName} onChange={(e) => setFolderName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()} placeholder={t('files.folderName')} className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm mb-3" autoFocus />
             <div className="flex justify-end gap-2">
-              <button onClick={() => setFolderDialogOpen(false)} className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">Cancel</button>
-              <button onClick={handleCreateFolder} disabled={!folderName.trim()} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 cursor-pointer">Create</button>
+              <button onClick={() => setFolderDialogOpen(false)} className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">{t('common.cancel')}</button>
+              <button onClick={handleCreateFolder} disabled={!folderName.trim()} className="rounded-lg bg-primary px-4 py-1.5 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50 cursor-pointer">{t('common.create')}</button>
             </div>
           </div>
         </div>
@@ -744,7 +746,7 @@ function FolderCard({ name, path, onNavigate, onDropDocuments, onDropFiles }: {
   )
 }
 
-function DocumentCard({ doc, onOpen, onDelete, onRename }: { doc: DocumentListItem; onOpen: () => void; onDelete: () => void; onRename: (t: string) => void }) {
+function DocumentCard({ doc, onOpen, onDelete, onRename, t }: { doc: DocumentListItem; onOpen: () => void; onDelete: () => void; onRename: (t: string) => void; t: (key: string) => string }) {
   const [renaming, setRenaming] = React.useState(false)
   const [renameValue, setRenameValue] = React.useState('')
   const [dragging, setDragging] = React.useState(false)
@@ -799,21 +801,21 @@ function DocumentCard({ doc, onOpen, onDelete, onRename }: { doc: DocumentListIt
               <span className="text-[9px] text-muted-foreground/50 uppercase">{doc.file_type}</span>
               {doc.page_count && <span className="text-[9px] text-muted-foreground/40">· {doc.page_count}p</span>}
             </div>
-            {doc.status === 'failed' && <span className="text-[9px] font-medium text-destructive/80">Failed</span>}
+            {doc.status === 'failed' && <span className="text-[9px] font-medium text-destructive/80">{t('common.failed')}</span>}
           </div>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent>
-        <ContextMenuItem onClick={onOpen}><ExternalLink className="size-3.5 mr-2" />Open</ContextMenuItem>
-        <ContextMenuItem onClick={startRename}><Pencil className="size-3.5 mr-2" />Rename</ContextMenuItem>
+        <ContextMenuItem onClick={onOpen}><ExternalLink className="size-3.5 mr-2" />{t('common.open')}</ContextMenuItem>
+        <ContextMenuItem onClick={startRename}><Pencil className="size-3.5 mr-2" />{t('common.rename')}</ContextMenuItem>
         <ContextMenuSeparator />
-        <ContextMenuItem variant="destructive" onClick={onDelete}><Trash2 className="size-3.5 mr-2" />Delete</ContextMenuItem>
+        <ContextMenuItem variant="destructive" onClick={onDelete}><Trash2 className="size-3.5 mr-2" />{t('common.delete')}</ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
   )
 }
 
-function NewCard({ onCreateNote, onUpload, onCreateFolder }: { onCreateNote: () => void; onUpload: () => void; onCreateFolder: () => void }) {
+function NewCard({ onCreateNote, onUpload, onCreateFolder, t }: { onCreateNote: () => void; onUpload: () => void; onCreateFolder: () => void; t: (key: string) => string }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -822,15 +824,15 @@ function NewCard({ onCreateNote, onUpload, onCreateFolder }: { onCreateNote: () 
             <Plus className="size-5 text-muted-foreground/40 group-hover:text-muted-foreground/60 transition-colors" />
           </div>
           <div className="px-2 py-1.5 text-center">
-            <span className="text-xs font-medium text-muted-foreground/50">New</span>
+            <span className="text-xs font-medium text-muted-foreground/50">{t('common.new')}</span>
           </div>
         </div>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
-        <DropdownMenuItem onClick={onCreateNote}><NotepadText className="size-3.5 mr-2" />Note</DropdownMenuItem>
-        <DropdownMenuItem onClick={onCreateFolder}><FolderPlus className="size-3.5 mr-2" />Folder</DropdownMenuItem>
+        <DropdownMenuItem onClick={onCreateNote}><NotepadText className="size-3.5 mr-2" />{t('common.note')}</DropdownMenuItem>
+        <DropdownMenuItem onClick={onCreateFolder}><FolderPlus className="size-3.5 mr-2" />{t('common.folder')}</DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={onUpload}><Upload className="size-3.5 mr-2" />Upload Files</DropdownMenuItem>
+        <DropdownMenuItem onClick={onUpload}><Upload className="size-3.5 mr-2" />{t('files.uploadFiles')}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -879,7 +881,7 @@ function BreadcrumbDropTarget({ label, path, onNavigate, onDropDocuments, onDrop
   )
 }
 
-function EmptyState({ isRoot, onUpload, onCreateNote }: { isRoot: boolean; onUpload: () => void; onCreateNote: () => void }) {
+function EmptyState({ isRoot, onUpload, onCreateNote, t }: { isRoot: boolean; onUpload: () => void; onCreateNote: () => void; t: (key: string) => string }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 gap-6">
       <div className="text-center">
@@ -888,10 +890,10 @@ function EmptyState({ isRoot, onUpload, onCreateNote }: { isRoot: boolean; onUpl
       </div>
       <div className="flex gap-3">
         <button onClick={onUpload} className="flex flex-col items-center gap-2 px-6 py-4 rounded-lg border border-dashed border-border hover:border-foreground/20 hover:bg-muted/50 transition-colors cursor-pointer">
-          <Upload className="size-5 text-muted-foreground" /><span className="text-xs text-muted-foreground">Upload files</span>
+          <Upload className="size-5 text-muted-foreground" /><span className="text-xs text-muted-foreground">{t('files.uploadFiles')}</span>
         </button>
         <button onClick={onCreateNote} className="flex flex-col items-center gap-2 px-6 py-4 rounded-lg border border-dashed border-border hover:border-foreground/20 hover:bg-muted/50 transition-colors cursor-pointer">
-          <NotepadText className="size-5 text-muted-foreground" /><span className="text-xs text-muted-foreground">New note</span>
+          <NotepadText className="size-5 text-muted-foreground" /><span className="text-xs text-muted-foreground">{t('common.new')} {t('common.note')}</span>
         </button>
       </div>
     </div>

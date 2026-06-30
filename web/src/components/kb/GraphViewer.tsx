@@ -4,6 +4,7 @@ import * as React from 'react'
 import { Loader2, RefreshCw } from 'lucide-react'
 import { useUserStore } from '@/stores'
 import { apiFetch } from '@/lib/api'
+import { useI18n } from '@/lib/i18n'
 import { toast } from 'sonner'
 import dynamic from 'next/dynamic'
 
@@ -50,6 +51,7 @@ const EDGE_COLOR = 'rgba(140, 140, 150, 0.18)'
 const EDGE_COLOR_HOVER = 'rgba(100, 100, 110, 0.5)'
 
 export function GraphViewer({ kbId, focusNodeId, onNavigateToDoc }: Props) {
+  const { t } = useI18n()
   const token = useUserStore((s) => s.accessToken)
   const containerRef = React.useRef<HTMLDivElement>(null)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -108,13 +110,13 @@ export function GraphViewer({ kbId, focusNodeId, onNavigateToDoc }: Props) {
       )
       const total = res.citations + res.links
       if (total === 0) {
-        toast.info('No citations or cross-references found')
+        toast.info(t('common.noCitationsFound', { default: 'No citations or cross-references found' }))
       } else {
-        toast.success(`${res.citations} citation${res.citations !== 1 ? 's' : ''}, ${res.links} cross-reference${res.links !== 1 ? 's' : ''}`)
+        toast.success(t('common.citationCount', { citations: res.citations, links: res.links }))
       }
       fetchGraph()
     } catch {
-      toast.error('Failed to rebuild references')
+      toast.error(t('common.failedToRebuild'))
     } finally {
       setRebuilding(false)
     }
@@ -292,15 +294,14 @@ export function GraphViewer({ kbId, focusNodeId, onNavigateToDoc }: Props) {
   if (loading) {
     overlay = <Loader2 className="size-5 animate-spin text-muted-foreground" />
   } else if (error || !graphData) {
-    overlay = <p className="text-sm text-muted-foreground">Failed to load graph data</p>
+    overlay = <p className="text-sm text-muted-foreground">{t('common.failedToLoadGraph')}</p>
   } else if (!hasNodes) {
-    overlay = <p className="text-sm text-muted-foreground">No documents to visualize yet</p>
+    overlay = <p className="text-sm text-muted-foreground">{t('common.noDocumentsYet')}</p>
   } else if (!hasEdges) {
     overlay = (
       <div className="flex flex-col items-center gap-3">
         <p className="text-sm text-muted-foreground text-center max-w-xs">
-          {graphData.nodes.length} document{graphData.nodes.length !== 1 ? 's' : ''} found, but no
-          references have been indexed yet.
+          {t('common.documentCount', { count: graphData.nodes.length })}
         </p>
         <button
           onClick={handleRebuild}
@@ -308,10 +309,10 @@ export function GraphViewer({ kbId, focusNodeId, onNavigateToDoc }: Props) {
           className="inline-flex items-center gap-2 rounded-full border border-border px-4 py-1.5 text-xs font-medium hover:bg-accent transition-colors cursor-pointer disabled:opacity-50"
         >
           <RefreshCw className={`size-3.5 ${rebuilding ? 'animate-spin' : ''}`} strokeWidth={2.25} />
-          {rebuilding ? 'Building...' : 'Build references'}
+          {rebuilding ? t('common.building') : t('common.buildReferences')}
         </button>
         <p className="text-[11px] text-muted-foreground/50 text-center max-w-xs">
-          Parses wiki pages for citations and cross-references
+          {t('common.parseWikiPages')}
         </p>
       </div>
     )
@@ -353,19 +354,19 @@ export function GraphViewer({ kbId, focusNodeId, onNavigateToDoc }: Props) {
             <button
               onClick={() => setShowSources((s) => !s)}
               className={`cursor-pointer transition-colors ${showSources ? 'text-foreground' : 'text-muted-foreground/40 hover:text-muted-foreground'}`}
-              title={showSources ? 'Hide sources' : 'Show sources'}
+              title={showSources ? t('common.hideSources') : t('common.showSources')}
             >
-              Sources
+              {t('common.sources')}
             </button>
             <span className="text-muted-foreground/20">|</span>
             <button
               onClick={handleRebuild}
               disabled={rebuilding}
               className="flex items-center gap-1 hover:text-foreground transition-colors cursor-pointer disabled:opacity-50"
-              title="Rebuild references"
+              title={t('common.rebuildReferences')}
             >
               <RefreshCw className={`size-2.5 ${rebuilding ? 'animate-spin' : ''}`} />
-              {rebuilding ? 'Building...' : 'Rebuild'}
+              {rebuilding ? t('common.building') : t('common.rebuild')}
             </button>
           </div>
 
@@ -373,10 +374,10 @@ export function GraphViewer({ kbId, focusNodeId, onNavigateToDoc }: Props) {
           {hoverNodeState && (() => {
             const p = hoverNodeState.path.toLowerCase()
             const category = hoverNodeState.source_kind !== 'wiki'
-              ? 'Source'
-              : p.includes('concepts/') ? 'Concept'
-              : p.includes('entities/') ? 'Entity'
-              : 'Page'
+              ? t('common.source')
+              : p.includes('concepts/') ? t('common.concept')
+              : p.includes('entities/') ? t('common.entity')
+              : t('common.page')
             return (
               <div
                 className="absolute text-xs bg-background/95 backdrop-blur-sm border border-border rounded-md px-3 py-2 pointer-events-none max-w-72 z-10"

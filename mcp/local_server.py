@@ -5,6 +5,8 @@ One workspace = one MCP server. Filesystem is truth. SQLite is the index.
 Usage:
     python -m local_server --workspace ~/research
     python -m local_server ~/research
+    python -m local_server --workspace ~/research --preset read-only
+    python -m local_server --workspace ~/research --allow "read,search,create"
 """
 
 import argparse
@@ -27,6 +29,17 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LLM Wiki local MCP server")
     parser.add_argument("workspace", nargs="?", default=".", help="Path to workspace folder")
     parser.add_argument("--workspace", dest="workspace_flag", default=None, help="Path to workspace folder")
+    parser.add_argument(
+        "--preset",
+        default=None,
+        choices=["read-only", "no-delete", "wiki-only", "full"],
+        help="Permission preset (read-only, no-delete, wiki-only, full)"
+    )
+    parser.add_argument(
+        "--allow",
+        default=None,
+        help="Comma-separated list of allowed tools (e.g. 'read,search,create')"
+    )
     return parser.parse_args()
 
 
@@ -92,6 +105,21 @@ def main():
     workspace = args.workspace_flag or args.workspace
     workspace = str(Path(workspace).resolve())
 
+    # 解析权限
+    from tools import resolve_allowed_tools, PRESETS
+    allowed_tools = resolve_allowed_tools(allow=args.allow, preset=args.preset or "full")
+
+    # 确定权限模式名称
+    if args.preset:
+        perm_mode = args.preset
+    elif args.allow:
+        perm_mode = f"custom({','.join(sorted(allowed_tools))})"
+    else:
+        perm_mode = "full"
+
+    logger.info("MCP Permission mode: %s", perm_mode)
+    logger.info("Allowed tools: %s", sorted(allowed_tools))
+
     sys.modules["local_server"] = sys.modules[__name__]
 
     loop = asyncio.new_event_loop()
@@ -101,25 +129,44 @@ def main():
     from tools import register
     from vaultfs import SqliteVaultFS
 
-    mcp = FastMCP(
-        name="LLM Wiki",
-        instructions=(
+    # 根据权限生成不同的 instructions
+    if args.preset == "read-only":
+        instructions = (
+            "You are connected to an LLM Wiki workspace in READ-ONLY mode. "
+            "You can read, search, and browse the user's files and wiki pages, "
+            "but you cannot create, edit, or delete anything. "
+            "Call the `guide` tool first to see available knowledge bases and learn the full workflow."
+        )
+    elif args.preset == "no-delete":
+        instructions = (
+            "You are connected to an LLM Wiki workspace in NO-DELETE mode. "
+            "You can read, search, create, and edit content, "
+            "but you cannot delete any files. "
+            "Call the `guide` tool first to see available knowledge bases and learn the full workflow."
+        )
+    else:
+        instructions = (
             "You are connected to an LLM Wiki workspace. The user has uploaded files, notes, "
             "and documents that you can read, search, edit, and organize. "
             "Call the `guide` tool first to see available knowledge bases and learn the full workflow."
-        ),
+        )
+
+    mcp = FastMCP(
+        name="LLM Wiki",
+        instructions=instructions,
     )
 
     def _get_user_id(ctx):
         return _LOCAL_USER_ID
 
-    register(mcp, _get_user_id, lambda user_id: SqliteVaultFS(user_id))
+    # 注册工具，传入允许的工具列表
+    register(mcp, _get_user_id, lambda user_id: SqliteVaultFS(user_id), allowed_tools=allowed_tools)
 
     @mcp.tool(name="ping", description="Test connectivity")
     async def ping() -> str:
         return "pong"
 
-    logger.info("Local MCP server ready — workspace: %s", workspace)
+    logger.info("Local MCP server ready — workspace: %s (permissions: %s)", workspace, perm_mode)
     asyncio.run(mcp.run_stdio_async())
 
 

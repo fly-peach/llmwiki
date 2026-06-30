@@ -144,7 +144,7 @@ export default function SettingsPage() {
 
       {usage && <div className="h-px bg-border my-8" />}
 
-      {/* MCP Config — expander */}
+      {/* MCP Config + Permissions + Multi-Folder — single unified expander */}
       <section>
         <McpExpander t={t} workspacePath={workspacePath} />
       </section>
@@ -343,23 +343,84 @@ function WikiFoldersSection({
   )
 }
 
-// ── MCP Expander ─────────────────────────────────────────────────
+// ── MCP Expander (unified: permissions + config + multi-folder) ─────────
+
+type PermissionMode = 'full' | 'read-only' | 'no-delete' | 'wiki-only' | 'custom'
+
+// Tool groups for custom permission selection
+const TOOL_GROUPS: { category: string; tools: { key: string; name: string }[] }[] = [
+  {
+    category: 'mcp.categoryReadonly',
+    tools: [
+      { key: 'guide', name: 'mcp.toolGuide' },
+      { key: 'search', name: 'mcp.toolSearch' },
+      { key: 'read', name: 'mcp.toolRead' },
+    ],
+  },
+  {
+    category: 'mcp.categoryWrite',
+    tools: [
+      { key: 'create', name: 'mcp.toolCreate' },
+      { key: 'edit', name: 'mcp.toolEdit' },
+      { key: 'lint', name: 'mcp.toolLint' },
+    ],
+  },
+  {
+    category: 'mcp.categoryDelete',
+    tools: [
+      { key: 'delete', name: 'mcp.toolDelete' },
+    ],
+  },
+  {
+    category: 'mcp.categoryManage',
+    tools: [
+      { key: 'create_knowledge_base', name: 'mcp.toolManage' },
+    ],
+  },
+]
+
+// Default tool sets per preset (must match backend PRESETS in mcp/tools/__init__.py)
+const PRESET_TOOLS: Record<Exclude<PermissionMode, 'custom'>, Set<string>> = {
+  'full': new Set(['guide', 'list_knowledge_bases', 'search', 'read', 'create', 'edit', 'append', 'delete', 'lint', 'create_knowledge_base']),
+  'read-only': new Set(['guide', 'list_knowledge_bases', 'search', 'read']),
+  'no-delete': new Set(['guide', 'list_knowledge_bases', 'search', 'read', 'create', 'edit', 'append', 'lint', 'create_knowledge_base']),
+  'wiki-only': new Set(['guide', 'list_knowledge_bases', 'search', 'read', 'create', 'edit', 'append', 'lint', 'create_knowledge_base']),
+}
 
 function McpExpander({ t, workspacePath }: { t: (k: string, v?: Record<string, string | number>) => string; workspacePath: string }) {
   const [open, setOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
+  const [mode, setMode] = React.useState<PermissionMode>('full')
+  const [customTools, setCustomTools] = React.useState<Set<string>>(new Set(PRESET_TOOLS['full']))
 
   const path = workspacePath || 'C:\\llmwiki-ws'
   const wsName = path.split(/[\\/]/).pop() || 'wiki'
 
-  const configJson = React.useMemo(() => JSON.stringify({
-    mcpServers: {
-      [`llmwiki-${wsName}`]: {
-        command: 'llmwiki',
-        args: ['mcp', path],
+  // Build the permission args based on selected mode
+  const permissionArgs = React.useMemo(() => {
+    if (mode === 'custom') {
+      // Always include guide + list_knowledge_bases as baseline
+      const tools = new Set(customTools)
+      tools.add('guide')
+      tools.add('list_knowledge_bases')
+      const toolList = Array.from(tools).join(',')
+      return ['--allow', toolList]
+    }
+    if (mode === 'full') return [] // no extra args for full access
+    return ['--preset', mode]
+  }, [mode, customTools])
+
+  const configJson = React.useMemo(() => {
+    const args = ['mcp', path, ...permissionArgs]
+    return JSON.stringify({
+      mcpServers: {
+        [`llmwiki-${wsName}`]: {
+          command: 'llmwiki',
+          args,
+        },
       },
-    },
-  }, null, 2), [path, wsName])
+    }, null, 2)
+  }, [path, wsName, permissionArgs])
 
   const handleCopy = React.useCallback(async () => {
     await navigator.clipboard.writeText(configJson)
@@ -367,16 +428,52 @@ function McpExpander({ t, workspacePath }: { t: (k: string, v?: Record<string, s
     setTimeout(() => setCopied(false), 2000)
   }, [configJson])
 
+  // When a preset is selected, sync the custom tool set too
+  const selectMode = (m: PermissionMode) => {
+    setMode(m)
+    if (m !== 'custom' && PRESET_TOOLS[m]) {
+      setCustomTools(new Set(PRESET_TOOLS[m]))
+    }
+  }
+
+  const toggleTool = (tool: string) => {
+    setCustomTools((prev) => {
+      const next = new Set(prev)
+      if (next.has(tool)) next.delete(tool)
+      else next.add(tool)
+      return next
+    })
+  }
+
+  // Dynamic hint based on selected mode
+  const configHint = (() => {
+    switch (mode) {
+      case 'read-only': return t('mcp.configHintReadOnly')
+      case 'no-delete': return t('mcp.configHintNoDelete')
+      case 'wiki-only': return t('mcp.configHintWikiOnly')
+      case 'custom': return t('mcp.configHintCustom')
+      default: return t('mcp.configHintFull')
+    }
+  })()
+
+  const presetOptions: { value: Exclude<PermissionMode, 'custom'>; icon: string; titleKey: string; descKey: string; longKey: string }[] = [
+    { value: 'full', icon: '👑', titleKey: 'mcp.fullAccessTitle', descKey: 'mcp.fullAccessDesc', longKey: 'mcp.fullAccessDescLong' },
+    { value: 'read-only', icon: '🛡️', titleKey: 'mcp.readOnlyTitle', descKey: 'mcp.readOnlyDesc', longKey: 'mcp.readOnlyDescLong' },
+    { value: 'no-delete', icon: '✏️', titleKey: 'mcp.noDeleteTitle', descKey: 'mcp.noDeleteDesc', longKey: 'mcp.noDeleteDescLong' },
+    { value: 'wiki-only', icon: '📚', titleKey: 'mcp.wikiOnlyTitle', descKey: 'mcp.wikiOnlyDesc', longKey: 'mcp.wikiOnlyDescLong' },
+  ]
+
   return (
     <div className="rounded-xl border border-border bg-card">
       <button
+        type="button"
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-5 py-4 cursor-pointer hover:bg-accent/30 transition-colors rounded-xl"
       >
         <div className="text-left">
           <h2 className="text-base font-medium">{t('settings.connectClaude')}</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {open ? t('mcp.step2Desc') : t('settings.clickToExpand')}
+            {open ? t('mcp.description') : t('settings.clickToExpand')}
           </p>
         </div>
         <span className="text-muted-foreground text-sm transition-transform" style={{ transform: open ? 'rotate(90deg)' : 'rotate(0deg)' }}>
@@ -384,19 +481,102 @@ function McpExpander({ t, workspacePath }: { t: (k: string, v?: Record<string, s
         </span>
       </button>
       {open && (
-        <div className="px-5 pb-5 space-y-4 border-t border-border">
-          {/* Step 1: copy config */}
+        <div className="px-5 pb-5 space-y-6 border-t border-border">
+
+          {/* ── Section 1: Permission Configuration ── */}
           <div className="mt-4">
-            <h3 className="text-sm font-medium mb-1.5">{t('mcp.step1Title')}</h3>
-            <p className="text-xs text-muted-foreground mb-2">{t('mcp.step1Desc')}</p>
+            <h3 className="text-sm font-medium mb-1">{t('mcp.permissionsTitle')}</h3>
+            <p className="text-xs text-muted-foreground mb-3">{t('mcp.permissionsDesc')}</p>
+
+            {/* Preset cards */}
+            <div className="space-y-2">
+              {presetOptions.map((opt) => (
+                <label
+                  key={opt.value}
+                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${mode === opt.value ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/30'}`}
+                >
+                  <input
+                    type="radio"
+                    name="mcp-permission"
+                    checked={mode === opt.value}
+                    onChange={() => selectMode(opt.value)}
+                    className="mt-0.5"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-1.5">
+                      <span>{opt.icon}</span>
+                      <span className="text-sm font-medium">{t(opt.titleKey)}</span>
+                      {opt.value === 'full' && <span className="text-[10px] text-primary">{t('mcp.presetRecommended')}</span>}
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-0.5">{t(opt.descKey)}</p>
+                    <p className="text-[11px] text-muted-foreground/70 mt-0.5">{t(opt.longKey)}</p>
+                  </div>
+                </label>
+              ))}
+
+              {/* Custom option */}
+              <label
+                className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${mode === 'custom' ? 'border-primary bg-primary/5' : 'border-border hover:bg-accent/30'}`}
+              >
+                <input
+                  type="radio"
+                  name="mcp-permission"
+                  checked={mode === 'custom'}
+                  onChange={() => selectMode('custom')}
+                  className="mt-0.5"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span>🔧</span>
+                    <span className="text-sm font-medium">{t('mcp.customTitle')}</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-0.5">{t('mcp.customDesc')}</p>
+                </div>
+              </label>
+            </div>
+
+            {/* Custom tool selection */}
+            {mode === 'custom' && (
+              <div className="mt-3 p-3 rounded-lg border border-border bg-muted/30 space-y-3">
+                {TOOL_GROUPS.map((group) => (
+                  <div key={group.category}>
+                    <p className="text-[11px] font-medium text-muted-foreground uppercase tracking-wide mb-1.5">{t(group.category)}</p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {group.tools.map((tool) => (
+                        <label key={tool.key} className="flex items-center gap-2 text-xs cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={customTools.has(tool.key)}
+                            onChange={() => toggleTool(tool.key)}
+                          />
+                          <span>{t(tool.name)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Hint */}
+            <div className="mt-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 text-xs text-blue-700 dark:text-blue-300">
+              <span className="font-medium">{t('mcp.permissionsHint')}：</span>{t('mcp.permissionsHintText')}
+            </div>
+          </div>
+
+          {/* ── Section 2: Config Preview ── */}
+          <div>
+            <h3 className="text-sm font-medium mb-1">{t('mcp.configPreviewTitle')}</h3>
+            <p className="text-xs text-muted-foreground mb-2">{configHint}</p>
             <div className="rounded-lg bg-muted border border-border overflow-hidden">
               <div className="flex items-center justify-between px-3 py-1.5 border-b border-border bg-card/50">
                 <span className="text-xs text-muted-foreground font-mono">claude_desktop_config.json</span>
                 <button
+                  type="button"
                   onClick={handleCopy}
                   className="shrink-0 inline-flex items-center gap-1.5 rounded-md bg-foreground text-background px-3 py-1 text-xs font-medium hover:opacity-90 transition-opacity cursor-pointer"
                 >
-                  {copied ? '✓ 已复制' : t('mcp.copyConfig')}
+                  {copied ? `✓ ${t('mcp.copied')}` : t('mcp.copyConfig')}
                 </button>
               </div>
               <pre className="p-3 text-xs font-mono overflow-x-auto text-foreground whitespace-pre">
@@ -405,19 +585,109 @@ function McpExpander({ t, workspacePath }: { t: (k: string, v?: Record<string, s
             </div>
           </div>
 
-          {/* File paths */}
-          <div className="space-y-1 text-xs text-muted-foreground">
-            <div>{t('mcp.claudeDesktop')}: <code className="bg-muted px-1.5 py-0.5 rounded">{t('mcp.configPathDesktop')}</code></div>
-            <div>{t('mcp.claudeCode')}: <code className="bg-muted px-1.5 py-0.5 rounded">{t('mcp.configPathCode')}</code></div>
+          {/* ── Section 3: Setup Guide ── */}
+          <div>
+            <h3 className="text-sm font-medium mb-2">{t('mcp.setupGuideTitle')}</h3>
+            <div className="space-y-2">
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <p className="text-sm font-medium mb-0.5">{t('mcp.setupStep1Title')}</p>
+                <p className="text-xs text-muted-foreground mb-2">{t('mcp.setupStep1Desc')}</p>
+                <div className="space-y-0.5 text-xs text-muted-foreground">
+                  <div>{t('mcp.claudeDesktop')}: <code className="bg-muted px-1.5 py-0.5 rounded">{t('mcp.configPathDesktop')}</code></div>
+                  <div>{t('mcp.claudeCode')}: <code className="bg-muted px-1.5 py-0.5 rounded">{t('mcp.configPathCode')}</code></div>
+                </div>
+              </div>
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <p className="text-sm font-medium mb-0.5">{t('mcp.setupStep2Title')}</p>
+                <p className="text-xs text-muted-foreground">{t('mcp.setupStep2Desc')}</p>
+              </div>
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <p className="text-sm font-medium mb-0.5">{t('mcp.setupStep3Title')}</p>
+                <p className="text-xs text-muted-foreground">{t('mcp.setupStep3Desc')}</p>
+              </div>
+            </div>
           </div>
 
-          {/* Step 2 */}
+          {/* ── Section 4: Permission Comparison Table ── */}
           <div>
-            <h3 className="text-sm font-medium mb-1.5">{t('mcp.step2Title')}</h3>
-            <p className="text-xs text-muted-foreground">{t('mcp.step2Info')}</p>
+            <h3 className="text-sm font-medium mb-2">{t('mcp.comparisonTitle')}</h3>
+            <div className="overflow-x-auto rounded-lg border border-border">
+              <table className="w-full text-xs">
+                <thead className="bg-muted/50">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium text-muted-foreground">{t('mcp.comparisonFeature')}</th>
+                    <th className="px-2 py-2 font-medium text-center">{t('mcp.comparisonReadOnly')}</th>
+                    <th className="px-2 py-2 font-medium text-center">{t('mcp.comparisonNoDelete')}</th>
+                    <th className="px-2 py-2 font-medium text-center">{t('mcp.comparisonWikiOnly')}</th>
+                    <th className="px-2 py-2 font-medium text-center">{t('mcp.comparisonFull')}</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border">
+                  <ComparisonRow label={t('mcp.comparisonRead')} values={[true, true, true, true]} />
+                  <ComparisonRow label={t('mcp.comparisonSearch')} values={[true, true, true, true]} />
+                  <ComparisonRow label={t('mcp.comparisonCreate')} values={[false, true, true, true]} />
+                  <ComparisonRow label={t('mcp.comparisonEdit')} values={[false, true, true, true]} />
+                  <ComparisonRow label={t('mcp.comparisonDelete')} values={[false, false, false, true]} />
+                  <ComparisonRow label={t('mcp.comparisonManage')} values={[false, true, true, true]} />
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* ── Section 5: Multi-Folder Guide ── */}
+          <div>
+            <h3 className="text-sm font-medium mb-2">{t('mcp.multiFolderTitle')}</h3>
+            <div className="p-3 rounded-lg border border-border bg-card/50 space-y-1.5">
+              <p className="text-xs text-muted-foreground mb-1">{t('mcp.multiFolderDesc')}</p>
+              <p className="text-xs text-muted-foreground">{t('mcp.multiFolderStep1')}</p>
+              <p className="text-xs text-muted-foreground">{t('mcp.multiFolderStep2')}</p>
+              <p className="text-xs text-muted-foreground">{t('mcp.multiFolderStep3')}</p>
+              <p className="text-xs text-muted-foreground">{t('mcp.multiFolderStep4')}</p>
+            </div>
+            <div className="mt-2 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 p-3 text-xs text-blue-700 dark:text-blue-300">
+              <p className="font-medium mb-0.5">{t('multiFolder.tipTitle')}</p>
+              <p>{t('multiFolder.tipDesc')}</p>
+            </div>
+          </div>
+
+          {/* ── Section 6: FAQ ── */}
+          <div>
+            <h3 className="text-sm font-medium mb-2">{t('mcp.faqTitle')}</h3>
+            <div className="space-y-2">
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <p className="text-xs font-medium mb-1">{t('mcp.faq1Title')}</p>
+                <p className="text-xs text-muted-foreground whitespace-pre-line">{t('mcp.faq1AnswerZh')}</p>
+              </div>
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <p className="text-xs font-medium mb-1">{t('mcp.faq2Title')}</p>
+                <p className="text-xs text-muted-foreground">{t('mcp.faq2Answer')}</p>
+              </div>
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <p className="text-xs font-medium mb-1">{t('mcp.faq3Title')}</p>
+                <p className="text-xs text-muted-foreground">{t('mcp.faq3AnswerZh')}</p>
+              </div>
+              <div className="p-3 rounded-lg border border-border bg-card/50">
+                <p className="text-xs font-medium mb-1">{t('mcp.faq4Title')}</p>
+                <p className="text-xs text-muted-foreground">{t('mcp.faq4AnswerZh')}</p>
+              </div>
+            </div>
           </div>
         </div>
       )}
     </div>
+  )
+}
+
+// Comparison row helper
+function ComparisonRow({ label, values }: { label: string; values: boolean[] }) {
+  return (
+    <tr>
+      <td className="px-3 py-2 text-muted-foreground">{label}</td>
+      {values.map((v, i) => (
+        <td key={i} className="px-2 py-2 text-center">
+          {v ? <span className="text-emerald-500">✓</span> : <span className="text-muted-foreground/40">✗</span>}
+        </td>
+      ))}
+    </tr>
   )
 }
