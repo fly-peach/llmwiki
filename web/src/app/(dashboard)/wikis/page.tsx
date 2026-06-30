@@ -3,6 +3,7 @@
 import * as React from 'react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
+import { useI18n } from '@/lib/i18n'
 import { useKBStore, useUserStore } from '@/stores'
 import {
   Plus, Loader2, LogOut, Moon, Sun, BookOpen, AlertCircle, RefreshCcw,
@@ -38,10 +39,11 @@ function relativeTime(dateStr: string): string {
 
 export default function WikisPage() {
   const router = useRouter()
+  const { t } = useI18n()
   const knowledgeBases = useKBStore((s) => s.knowledgeBases)
   const loading = useKBStore((s) => s.loading)
   const error = useKBStore((s) => s.error)
-  const retryFetchKBs = useKBStore((s) => s.fetchKBs)
+  const fetchKBs = useKBStore((s) => s.fetchKBs)
   const createKB = useKBStore((s) => s.createKB)
   const user = useUserStore((s) => s.user)
   const [creating, setCreating] = React.useState(false)
@@ -50,6 +52,10 @@ export default function WikisPage() {
   const [kind, setKind] = React.useState<'wiki' | 'course'>('wiki')
   const [openingSlug, setOpeningSlug] = React.useState<string | null>(null)
   const [, startNavigation] = React.useTransition()
+
+  React.useEffect(() => {
+    fetchKBs()
+  }, [fetchKBs])
 
   const openWiki = React.useCallback((slug: string) => {
     setOpeningSlug(slug)
@@ -115,18 +121,18 @@ export default function WikisPage() {
                 <AlertCircle className="size-4" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-sm font-semibold text-foreground">Could not load wikis</h1>
+                <h1 className="text-sm font-semibold text-foreground">{t('wikis.loadError')}</h1>
                 <p className="mt-1 text-xs leading-5 text-muted-foreground">
                   {error}
                 </p>
               </div>
             </div>
             <button
-              onClick={() => retryFetchKBs()}
+              onClick={() => fetchKBs()}
               className="mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
             >
               <RefreshCcw className="size-4" />
-              Retry
+              {t('wikis.retry')}
             </button>
           </div>
         </div>
@@ -145,10 +151,10 @@ export default function WikisPage() {
                 <BookOpen size={24} className="text-background" />
               </div>
               <h1 className="text-3xl font-bold tracking-tight">
-                Create your first wiki
+                {t('wikis.createFirst')}
               </h1>
               <p className="mt-3 text-base text-muted-foreground leading-relaxed max-w-md mx-auto">
-                Upload sources, connect Claude, and let it compile a structured wiki automatically.
+                {t('wikis.createDesc')}
               </p>
             </div>
 
@@ -156,18 +162,18 @@ export default function WikisPage() {
               {[
                 {
                   step: '1',
-                  title: 'Create a wiki',
-                  desc: 'Name your knowledge space. You can have as many as you need.',
+                  title: t('wikis.step1Title'),
+                  desc: t('wikis.step1Desc'),
                 },
                 {
                   step: '2',
-                  title: 'Add sources',
-                  desc: 'Upload PDFs, notes, transcripts — anything you want Claude to learn from.',
+                  title: t('wikis.step2Title'),
+                  desc: t('wikis.step2Desc'),
                 },
                 {
                   step: '3',
-                  title: 'Ask Claude',
-                  desc: 'Claude reads your sources and compiles a wiki with cross-references and summaries.',
+                  title: t('wikis.step3Title'),
+                  desc: t('wikis.step3Desc'),
                 },
               ].map((item, i) => (
                 <motion.div
@@ -193,16 +199,16 @@ export default function WikisPage() {
                 className="inline-flex items-center justify-center gap-2.5 rounded-full bg-foreground text-background px-8 py-3 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-50"
               >
                 {creating ? (
-                  <><Loader2 size={15} className="animate-spin" /> Setting up...</>
+                  <><Loader2 size={15} className="animate-spin" /> {t('wikis.settingUp')}</>
                 ) : (
-                  <><Plus size={15} /> Get started</>
+                  <><Plus size={15} /> {t('wikis.getStarted')}</>
                 )}
               </button>
               <button
                 onClick={() => setDialogOpen(true)}
                 className="text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
               >
-                or create with a custom name
+                {t('wikis.customName')}
               </button>
             </div>
           </div>
@@ -272,7 +278,7 @@ export default function WikisPage() {
                     {stats.length > 0 ? (
                       <span>{stats.join(' \u00B7 ')}</span>
                     ) : (
-                      <span className="text-muted-foreground/30">No sources yet</span>
+                      <span className="text-muted-foreground/30">{t('wikis.noSources')}</span>
                     )}
                     <span className="ml-auto text-muted-foreground/30 shrink-0">
                       {relativeTime(kb.updated_at)}
@@ -287,7 +293,7 @@ export default function WikisPage() {
               className="flex flex-col items-center justify-center gap-2 p-5 rounded-xl border border-dashed border-border hover:border-primary/50 hover:bg-accent/30 transition-colors cursor-pointer min-h-[112px]"
             >
               <Plus size={16} className="text-muted-foreground" />
-              <span className="text-xs text-muted-foreground">New Wiki</span>
+              <span className="text-xs text-muted-foreground">{t('wikis.newWiki')}</span>
             </button>
           </div>
         </div>
@@ -308,9 +314,10 @@ export default function WikisPage() {
 }
 
 function PageHeader({ onNew }: { onNew?: () => void }) {
+  const { t } = useI18n()
   return (
     <div className="shrink-0 flex items-center justify-between px-6 h-12 border-b border-border">
-      <span className="text-sm font-medium text-foreground tracking-tight">LLM Wiki</span>
+      <span className="text-sm font-medium text-foreground tracking-tight">{t('wikis.header')}</span>
       <div className="flex items-center gap-1">
         {onNew && (
           <button
@@ -318,7 +325,7 @@ function PageHeader({ onNew }: { onNew?: () => void }) {
             className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground hover:bg-accent rounded-md transition-colors cursor-pointer"
           >
             <Plus className="size-3" />
-            New
+            {t('wikis.newButton')}
           </button>
         )}
         <UserMenu />
@@ -328,6 +335,7 @@ function PageHeader({ onNew }: { onNew?: () => void }) {
 }
 
 function UserMenu() {
+  const { t } = useI18n()
   const { theme, setTheme } = useTheme()
   const user = useUserStore((s) => s.user)
   const signOutLocal = useUserStore((s) => s.signOut)
@@ -356,16 +364,16 @@ function UserMenu() {
         {mounted && (
           <DropdownMenuItem onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}>
             {theme === 'dark' ? (
-              <><Sun className="mr-2 h-4 w-4" />Light Mode</>
+              <><Sun className="mr-2 h-4 w-4" />{t('user.lightMode')}</>
             ) : (
-              <><Moon className="mr-2 h-4 w-4" />Dark Mode</>
+              <><Moon className="mr-2 h-4 w-4" />{t('user.darkMode')}</>
             )}
           </DropdownMenuItem>
         )}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={handleSignOut}>
           <LogOut className="mr-2 h-4 w-4" />
-          Sign Out
+          {t('user.signOut')}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
@@ -391,12 +399,13 @@ function CreateWikiDialog({
   creating: boolean
   onCreate: () => void
 }) {
+  const { t } = useI18n()
   const isCourse = kind === 'course'
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Create {isCourse ? 'course' : 'wiki'}</DialogTitle>
+          <DialogTitle>{t('wikis.createDialogTitle', { kind: isCourse ? t('common.course') : t('common.wiki') })}</DialogTitle>
         </DialogHeader>
         <Input
           value={name}
@@ -419,7 +428,7 @@ function CreateWikiDialog({
             {isCourse ? 'Back to wiki' : 'Make this a course instead'}
           </button>
           <Button onClick={onCreate} disabled={creating || !name.trim()}>
-            {creating ? 'Creating…' : `Create ${isCourse ? 'course' : 'wiki'}`}
+            {creating ? t('common.loading') : t('wikis.createDialogSubmit')}
           </Button>
         </DialogFooter>
       </DialogContent>

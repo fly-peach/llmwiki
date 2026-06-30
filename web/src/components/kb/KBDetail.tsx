@@ -1,7 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import { useSearchParams } from 'next/navigation'
+import { useSearchParams, useRouter } from 'next/navigation'
 import dynamic from 'next/dynamic'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Upload as UploadIcon, BookOpen, ArrowUpRight, Loader2 } from 'lucide-react'
@@ -129,6 +129,7 @@ type Props = {
 
 export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Props) {
   const searchParams = useSearchParams()
+  const router = useRouter()
   const token = useUserStore((s) => s.accessToken)
   const userId = useUserStore((s) => s.user?.id)
   const { documents, setDocuments, loading } = useKBDocuments(kbId)
@@ -309,7 +310,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
       return
     }
     if (!activeWikiDoc) {
-      setPageContent(`Page not found: ${wikiActivePath}`)
+      setPageContent(`页面未找到: ${wikiActivePath}`)
       setPageTitle('')
       setPageLoadedPath(wikiActivePath)
       return
@@ -326,7 +327,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
         if (!controller.signal.aborted) setPageContent(res.content || '')
       })
       .catch((err) => {
-        if (!controller.signal.aborted) setPageContent('Failed to load page content.')
+        if (!controller.signal.aborted) setPageContent('加载页面内容失败')
       })
       .finally(() => {
         if (!controller.signal.aborted) {
@@ -770,8 +771,8 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
           >
             <div className="flex flex-col items-center gap-3 border-2 border-dashed border-primary rounded-xl px-12 py-10">
               <UploadIcon className="size-8 text-primary" />
-              <p className="text-sm font-medium text-primary">Drop files to upload</p>
-              <p className="text-xs text-muted-foreground">PDF, Word, PowerPoint, images, and more</p>
+              <p className="text-sm font-medium text-primary">拖放文件以上传</p>
+              <p className="text-xs text-muted-foreground">PDF、Word、PowerPoint、图片等</p>
             </div>
           </motion.div>
         )}
@@ -892,9 +893,9 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
               >
                 <BookOpen className="size-10 text-muted-foreground/20" />
                 <div className="text-center max-w-sm">
-                  <h3 className="text-base font-medium mb-1.5">No wiki yet</h3>
+                  <h3 className="text-base font-medium mb-1.5">暂无 Wiki</h3>
                   <p className="text-sm text-muted-foreground leading-relaxed">
-                    Add some sources, then ask Claude to compile a wiki from them.
+                    添加一些来源，然后让 AI 从中编译出 Wiki。
                   </p>
                 </div>
                 <div className="flex items-center gap-3 mt-2">
@@ -903,17 +904,15 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
                     className="inline-flex items-center gap-2 rounded-full bg-foreground text-background px-5 py-2 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer"
                   >
                     <UploadIcon className="size-3.5 opacity-60" />
-                    Upload Sources
+                    上传来源
                   </button>
-                  <a
-                    href="https://claude.ai"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2 text-sm font-medium hover:bg-accent transition-colors"
+                  <button
+                    onClick={() => router.push('/settings')}
+                    className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2 text-sm font-medium hover:bg-accent transition-colors cursor-pointer"
                   >
-                    Open Claude
+                    配置MCP
                     <ArrowUpRight className="size-3.5 opacity-60" />
-                  </a>
+                  </button>
                 </div>
               </motion.div>
             )}

@@ -784,7 +784,7 @@ export function WikiContent({ content, title, path, onNavigate, onSourceClick, o
                   <button
                     onClick={handleCopy}
                     className="p-1.5 rounded-md text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
-                    title="Copy markdown"
+                    title="复制 Markdown"
                   >
                     {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
                   </button>
@@ -792,7 +792,7 @@ export function WikiContent({ content, title, path, onNavigate, onSourceClick, o
                     <button
                       onClick={onGraphClick}
                       className="p-1.5 rounded-md text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors cursor-pointer"
-                      title="Show in graph"
+                      title="在知识图谱中查看"
                     >
                       <Network className="size-3.5" />
                     </button>

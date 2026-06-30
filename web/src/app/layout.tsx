@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "next-themes";
 import { Toaster } from "@/components/ui/sonner";
 import { OpenReplayTracker } from "@/components/OpenReplay";
+import { RootClient } from "./RootClient";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -72,7 +73,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="zh" suppressHydrationWarning>
       <head>
         <script
           dangerouslySetInnerHTML={{ __html: themeScript }}
@@ -82,17 +83,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          enableSystem={false}
-          disableTransitionOnChange
-          storageKey="theme"
-        >
-          {children}
-          <Toaster richColors />
-          <OpenReplayTracker />
-        </ThemeProvider>
+        <RootClient>{children}</RootClient>
       </body>
     </html>
   );

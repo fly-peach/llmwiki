@@ -1,6 +1,7 @@
 'use client'
 
 import * as React from 'react'
+import { useRouter } from 'next/navigation'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronRight, FileText, NotepadText, Library,
@@ -73,6 +74,7 @@ export function KBSidenav({
   courseCurrentPath = null,
   courseProgress,
 }: KBSidenavProps) {
+  const router = useRouter()
   const [searchOpen, setSearchOpen] = React.useState(false)
 
   React.useEffect(() => {
@@ -150,7 +152,7 @@ export function KBSidenav({
       <div className="shrink-0 px-2 pb-1 flex items-center gap-1.5">
         <button
           onClick={() => setSearchOpen(true)}
-          aria-label="Search pages and sources"
+          aria-label="搜索页面和来源"
           className="flex items-center gap-2 flex-1 px-2.5 h-8 text-xs text-muted-foreground/50 hover:text-muted-foreground border border-border hover:bg-accent rounded-md transition-colors cursor-pointer"
         >
           <SearchIcon className="size-3" />
@@ -167,7 +169,7 @@ export function KBSidenav({
                   ? 'bg-accent text-foreground border-border'
                   : 'text-muted-foreground/50 hover:text-muted-foreground border-border hover:bg-accent',
               )}
-              title="Knowledge graph"
+              title="知识图谱"
             >
               <Network className="size-3" />
             </button>
@@ -184,7 +186,7 @@ export function KBSidenav({
 
       {/* Search palette */}
       <CommandDialog open={searchOpen} onOpenChange={setSearchOpen}>
-        <CommandInput placeholder="Jump to page, source, or action..." aria-label="Search pages and sources" />
+        <CommandInput placeholder="跳转到页面、来源或操作..." aria-label="搜索页面和来源" />
         <CommandList>
           <CommandEmpty>No results found.</CommandEmpty>
           {allSearchableItems.some((i) => i.type === 'wiki') && (
@@ -284,16 +286,14 @@ export function KBSidenav({
         ) : (
           <div className="px-2 py-4 text-center">
             <BookOpen className="size-6 text-muted-foreground/20 mx-auto mb-2" />
-            <p className="text-xs text-muted-foreground mb-2">No wiki yet</p>
-            <a
-              href="https://claude.ai"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            <p className="text-xs text-muted-foreground mb-2">暂无 Wiki</p>
+            <button
+              onClick={() => router.push('/settings')}
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
             >
-              Open Claude
+              配置MCP
               <ArrowUpRight className="size-3" />
-            </a>
+            </button>
           </div>
         )}
       </div>

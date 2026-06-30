@@ -519,7 +519,7 @@ export function FilesGrid({
               <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => setFolderDialogOpen(true)}>
                   <FolderPlus className="size-3.5 mr-2" />
-                  New Folder
+                  新建文件夹
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={handleCreateNoteHere}>
                   <NotepadText className="size-3.5 mr-2" />
@@ -663,7 +663,7 @@ export function FilesGrid({
             </ContextMenuTrigger>
             <ContextMenuContent>
               <ContextMenuItem onClick={handleCreateNoteHere}><NotepadText className="size-3.5 mr-2" />New Note</ContextMenuItem>
-              <ContextMenuItem onClick={() => setFolderDialogOpen(true)}><FolderPlus className="size-3.5 mr-2" />New Folder</ContextMenuItem>
+              <ContextMenuItem onClick={() => setFolderDialogOpen(true)}><FolderPlus className="size-3.5 mr-2" />新建文件夹</ContextMenuItem>
               <ContextMenuSeparator />
               <ContextMenuItem onClick={handleUploadHere}><Upload className="size-3.5 mr-2" />Upload Files</ContextMenuItem>
             </ContextMenuContent>
@@ -675,7 +675,7 @@ export function FilesGrid({
       {folderDialogOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setFolderDialogOpen(false)}>
           <div className="bg-background border border-border rounded-lg p-6 w-80 shadow-xl" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-sm font-medium mb-3">New folder</h3>
+            <h3 className="text-sm font-medium mb-3">新建文件夹</h3>
             <input value={folderName} onChange={(e) => setFolderName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleCreateFolder()} placeholder="Folder name" className="w-full rounded-lg border border-input bg-background px-3 py-2 text-sm mb-3" autoFocus />
             <div className="flex justify-end gap-2">
               <button onClick={() => setFolderDialogOpen(false)} className="rounded-lg px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors cursor-pointer">Cancel</button>
@@ -883,8 +883,8 @@ function EmptyState({ isRoot, onUpload, onCreateNote }: { isRoot: boolean; onUpl
   return (
     <div className="flex flex-col items-center justify-center py-20 gap-6">
       <div className="text-center">
-        <p className="text-sm text-muted-foreground">{isRoot ? 'No files yet' : 'This folder is empty'}</p>
-        <p className="text-xs text-muted-foreground/60 mt-1">Upload documents or create notes to get started</p>
+        <p className="text-sm text-muted-foreground">{isRoot ? '暂无文件' : '此文件夹为空'}</p>
+        <p className="text-xs text-muted-foreground/60 mt-1">上传文档或创建笔记以开始</p>
       </div>
       <div className="flex gap-3">
         <button onClick={onUpload} className="flex flex-col items-center gap-2 px-6 py-4 rounded-lg border border-dashed border-border hover:border-foreground/20 hover:bg-muted/50 transition-colors cursor-pointer">

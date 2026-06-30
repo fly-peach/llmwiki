@@ -422,9 +422,9 @@ export function WikiOnlyDetail({
             <div className="flex h-full flex-col items-center justify-center gap-4 px-6">
               <BookOpen className="size-10 text-muted-foreground/20" />
               <div className="max-w-sm text-center">
-                <h3 className="mb-1.5 text-base font-medium">No wiki yet</h3>
+                <h3 className="mb-1.5 text-base font-medium">暂无 Wiki</h3>
                 <p className="text-sm leading-relaxed text-muted-foreground">
-                  Add some sources, then ask Claude to compile a wiki from them.
+                  添加一些来源，然后让 AI 从中编译出 Wiki。
                 </p>
               </div>
               <div className="mt-2 flex items-center gap-3">
@@ -433,17 +433,15 @@ export function WikiOnlyDetail({
                   className="inline-flex cursor-pointer items-center gap-2 rounded-full bg-foreground px-5 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
                 >
                   <UploadIcon className="size-3.5 opacity-60" />
-                  Upload Sources
+                  上传来源
                 </button>
-                <a
-                  href="https://claude.ai"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-2 rounded-full border border-border px-5 py-2 text-sm font-medium transition-colors hover:bg-accent"
+                <button
+                  onClick={() => router.push('/settings')}
+                  className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-border px-5 py-2 text-sm font-medium transition-colors hover:bg-accent"
                 >
-                  Open Claude
+                  配置MCP
                   <ArrowUpRight className="size-3.5 opacity-60" />
-                </a>
+                </button>
               </div>
             </div>
           )}

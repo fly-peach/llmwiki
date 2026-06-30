@@ -129,9 +129,9 @@ export default function OnboardingPage() {
 
               <div className="grid grid-cols-3 gap-3 mt-10 text-left">
                 {[
-                  { icon: FileText, title: 'Sources', desc: 'PDFs, notes, transcripts' },
-                  { icon: BookOpen, title: 'Wiki', desc: 'Auto-generated pages' },
-                  { icon: PenTool, title: 'Tools', desc: 'Search, read, write via MCP' },
+                  { icon: FileText, title: '来源', desc: 'PDF、笔记、转录稿' },
+                  { icon: BookOpen, title: 'Wiki', desc: '自动生成的页面' },
+                  { icon: PenTool, title: '工具', desc: '通过 MCP 搜索、读写' },
                 ].map((item) => (
                   <div key={item.title} className="rounded-xl border border-border p-4 bg-card">
                     <item.icon className="size-4 text-muted-foreground mb-2.5" strokeWidth={1.5} />
@@ -145,7 +145,7 @@ export default function OnboardingPage() {
                 onClick={() => goToStep('create')}
                 className="mt-10 inline-flex items-center gap-2 rounded-full bg-foreground text-background px-8 py-3 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer"
               >
-                Get started
+                开始使用
                 <ArrowRight className="size-3.5" />
               </button>
             </motion.div>
@@ -165,14 +165,14 @@ export default function OnboardingPage() {
                 className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer mb-8"
               >
                 <ArrowLeft className="size-3" />
-                Back
+                返回
               </button>
 
               <h1 className="text-2xl font-bold tracking-tight">
-                Name your wiki
+                命名你的 Wiki
               </h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                This is your knowledge space. You can rename it anytime.
+                这是你的知识空间。你可以随时重命名。
               </p>
 
               <div className="mt-8">
@@ -197,9 +197,9 @@ export default function OnboardingPage() {
                 className="mt-6 w-full inline-flex items-center justify-center gap-2 rounded-full bg-foreground text-background px-8 py-3 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer disabled:opacity-40"
               >
                 {creating ? (
-                  <><Loader2 size={15} className="animate-spin" /> Creating...</>
+                  <><Loader2 size={15} className="animate-spin" /> 创建中...</>
                 ) : (
-                  <>Create wiki <ArrowRight className="size-3.5" /></>
+                  <>创建 Wiki <ArrowRight className="size-3.5" /></>
                 )}
               </button>
             </motion.div>
@@ -219,14 +219,14 @@ export default function OnboardingPage() {
                 className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer mb-8"
               >
                 <ArrowLeft className="size-3" />
-                Back
+                返回
               </button>
 
               <h1 className="text-2xl font-bold tracking-tight">
-                Connect Claude
+                连接 AI
               </h1>
               <p className="mt-2 text-sm text-muted-foreground">
-                Add LLM Wiki as a connector so Claude can read and write to your wiki.
+                将 LLM Wiki 添加为连接器，让 AI 能够读写你的 Wiki。
               </p>
 
               <div className="mt-8 space-y-6">
@@ -244,22 +244,22 @@ export default function OnboardingPage() {
                         : 'bg-foreground text-background hover:opacity-90'
                     )}
                   >
-                    {urlCopied ? <><Check size={14} /> Copied</> : <><Copy size={14} /> Copy</>}
+                    {urlCopied ? <><Check size={14} /> 已复制</> : <><Copy size={14} /> 复制</>}
                   </button>
                 </div>
 
                 {/* Steps */}
                 <div className="rounded-xl border border-border bg-card p-5">
                   <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground/50 mb-3">
-                    In Claude
+                    在 Claude 中
                   </p>
                   <ol className="space-y-2.5">
                     {[
-                      <>Open <strong>Settings</strong></>,
-                      <>Go to <strong>Connectors</strong></>,
-                      <>Click <strong>Add custom connector</strong></>,
-                      'Paste the URL above and approve access',
-                      'Sign in with your account when prompted',
+                      <>打开 <strong>设置</strong></>,
+                      <>前往 <strong>连接器</strong></>,
+                      <>点击 <strong>添加自定义连接器</strong></>,
+                      '粘贴上面的 URL 并批准访问',
+                      '收到提示时使用你的账号登录',
                     ].map((text, i) => (
                       <li key={i} className="flex items-start gap-3 text-sm">
                         <span className="flex items-center justify-center w-5 h-5 rounded-full bg-muted text-[10px] font-bold text-muted-foreground shrink-0 mt-0.5">
@@ -277,7 +277,7 @@ export default function OnboardingPage() {
                   onClick={() => goToStep('done')}
                   className="flex-1 inline-flex items-center justify-center gap-2 rounded-full bg-foreground text-background px-8 py-3 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer"
                 >
-                  Continue
+                  继续
                   <ArrowRight className="size-3.5" />
                 </button>
               </div>
@@ -286,7 +286,7 @@ export default function OnboardingPage() {
                 onClick={() => goToStep('done')}
                 className="mt-3 w-full text-center text-xs text-muted-foreground/50 hover:text-muted-foreground transition-colors cursor-pointer"
               >
-                Skip — I&apos;ll set this up later
+                跳过 — 我稍后再设置
               </button>
             </motion.div>
           )}
@@ -305,30 +305,28 @@ export default function OnboardingPage() {
                 <Check size={28} className="text-green-600 dark:text-green-400" />
               </div>
               <h1 className="text-2xl font-bold tracking-tight">
-                You&apos;re all set
+                一切就绪
               </h1>
               <p className="mt-3 text-sm text-muted-foreground leading-relaxed max-w-sm mx-auto">
-                Upload some sources to your wiki, then ask Claude to compile them into structured pages.
+                上传一些资料到你的 Wiki，然后让 AI 将其编译成结构化的页面。
               </p>
 
               <button
                 onClick={handleComplete}
                 className="mt-10 inline-flex items-center justify-center gap-2 rounded-full bg-foreground text-background px-8 py-3 text-sm font-medium hover:opacity-90 transition-opacity cursor-pointer"
               >
-                Go to my wiki
+                前往我的 Wiki
                 <ArrowRight className="size-3.5" />
               </button>
 
               <div className="mt-6">
-                <a
-                  href="https://claude.ai"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+                <button
+                  onClick={() => router.push('/settings')}
+                  className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
                 >
                   <ExternalLink size={12} />
-                  Open Claude
-                </a>
+                  配置MCP
+                </button>
               </div>
             </motion.div>
           )}
