@@ -2,18 +2,11 @@
 
 import * as React from 'react'
 import { toast } from 'sonner'
-import { apiFetch, getDocumentsWsUrl } from '@/lib/api'
-import { refreshAccessToken } from '@/lib/auth-token'
+import { apiFetch } from '@/lib/api'
 import { useUserStore } from '@/stores'
 import type { DocumentListItem } from '@/lib/types'
 
-const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
 const POLL_INTERVAL = 2000
-const WS_RECONNECT_BASE = 1000
-const WS_RECONNECT_MAX = 30000
-const WS_CLOSE_AUTH = 4001
-const WS_CLOSE_FORBIDDEN = 4003
-const DEBOUNCE_MS = 300
 
 // Fields whose change we want to *force* a re-render through identity churn.
 // `updated_at` is intentionally excluded — it bumps on every UPDATE (incl.
@@ -59,10 +52,6 @@ export function useKBDocuments(knowledgeBaseId: string) {
   const [documents, setDocuments] = React.useState<DocumentListItem[]>([])
   const [loading, setLoading] = React.useState(true)
   const accessToken = useUserStore((s) => s.accessToken)
-  const wsRef = React.useRef<WebSocket | null>(null)
-  const reconnectTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
-  const reconnectDelay = React.useRef(WS_RECONNECT_BASE)
-  const debounceTimer = React.useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const fetchDocs = React.useCallback(async () => {
     if (!knowledgeBaseId || !accessToken) return
@@ -93,80 +82,12 @@ export function useKBDocuments(knowledgeBaseId: string) {
     fetchDocs().finally(() => setLoading(false))
   }, [knowledgeBaseId, fetchDocs])
 
-  // Real-time updates: WebSocket (hosted) or polling (local)
+  // Real-time updates: poll the API (local mode)
   React.useEffect(() => {
     if (!knowledgeBaseId || !accessToken) return
 
-    if (isLocal) {
-      const interval = setInterval(fetchDocs, POLL_INTERVAL)
-      return () => clearInterval(interval)
-    }
-
-    // Hosted mode — connect to API WebSocket
-    let cancelled = false
-
-    function connect() {
-      if (cancelled) return
-
-      const url = getDocumentsWsUrl(knowledgeBaseId)
-      const ws = new WebSocket(url)
-      wsRef.current = ws
-
-      ws.onopen = () => {
-        // Send token as first message — keeps JWT out of URLs and logs
-        ws.send(accessToken!)
-        reconnectDelay.current = WS_RECONNECT_BASE
-      }
-
-      ws.onmessage = () => {
-        if (process.env.NODE_ENV === 'development') {
-          console.count(`documents ws message:${knowledgeBaseId}`)
-        }
-        // Debounce refetches — OCR updates can fire many events in quick succession
-        if (debounceTimer.current) clearTimeout(debounceTimer.current)
-        debounceTimer.current = setTimeout(fetchDocs, DEBOUNCE_MS)
-      }
-
-      ws.onclose = (e) => {
-        wsRef.current = null
-        if (cancelled) return
-        // 4001 = auth failure. The common cause is a tab reconnecting with a
-        // token that expired while the page was open; ask Supabase to refresh
-        // and let the accessToken dependency recreate the socket.
-        if (e.code === WS_CLOSE_AUTH) {
-          console.warn('WebSocket auth failed; refreshing token:', e.reason)
-          refreshAccessToken().catch((err) => {
-            console.error('Token refresh after WebSocket auth failure failed:', err)
-          })
-          return
-        }
-        if (e.code === WS_CLOSE_FORBIDDEN) {
-          console.warn('WebSocket subscription forbidden; stopping reconnect:', e.reason)
-          return
-        }
-        // Reconnect with exponential backoff
-        const delay = reconnectDelay.current
-        reconnectDelay.current = Math.min(delay * 2, WS_RECONNECT_MAX)
-        reconnectTimer.current = setTimeout(connect, delay)
-      }
-
-      ws.onerror = () => {
-        // onclose will fire after this, which handles reconnection
-      }
-    }
-
-    connect()
-
-    return () => {
-      cancelled = true
-      if (debounceTimer.current) clearTimeout(debounceTimer.current)
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
-      if (wsRef.current) {
-        wsRef.current.onclose = null
-        wsRef.current.close()
-        wsRef.current = null
-      }
-    }
+    const interval = setInterval(fetchDocs, POLL_INTERVAL)
+    return () => clearInterval(interval)
   }, [knowledgeBaseId, accessToken, fetchDocs])
 
   const refetchDocuments = React.useCallback(() => {

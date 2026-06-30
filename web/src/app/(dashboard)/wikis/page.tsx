@@ -17,7 +17,6 @@ import {
   DropdownMenuItem, DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu'
 import { useTheme } from 'next-themes'
-const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
 
 function wikiHref(slug: string): string {
   return `/wikis/${slug}`
@@ -329,7 +328,6 @@ function PageHeader({ onNew }: { onNew?: () => void }) {
 }
 
 function UserMenu() {
-  const router = useRouter()
   const { theme, setTheme } = useTheme()
   const user = useUserStore((s) => s.user)
   const signOutLocal = useUserStore((s) => s.signOut)
@@ -337,14 +335,7 @@ function UserMenu() {
   React.useEffect(() => { setMounted(true) }, [])
 
   const handleSignOut = async () => {
-    if (!isLocal) {
-      const { createClient } = await import('@/lib/supabase/client')
-      const supabase = createClient()
-      await supabase.auth.signOut()
-    }
     signOutLocal()
-    if (isLocal) return
-    router.push('/login')
   }
 
   if (!user) return null

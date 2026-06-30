@@ -3,18 +3,15 @@
 Mirrors api/services/chunker.py so MCP-created content shows up in
 keyword search alongside API-created content. Splits content into
 ~512 token chunks with ~128 token overlap, tracking markdown headers
-for breadcrumb context. Persists into `document_chunks` (Postgres via
-asyncpg, SQLite via aiosqlite — chunks_fts is kept in sync by triggers
-in the local schema).
+for breadcrumb context. Persists into `document_chunks` (SQLite via
+aiosqlite — chunks_fts is kept in sync by triggers in the local schema).
 """
 
-import json
 import logging
 import re
 from dataclasses import dataclass
 
 import aiosqlite
-import asyncpg
 
 logger = logging.getLogger(__name__)
 
@@ -160,31 +157,6 @@ def _split_oversized(text: str) -> list[str]:
     if current:
         pieces.append(current)
     return pieces
-
-
-async def store_chunks_pg(
-    conn: asyncpg.Connection,
-    document_id: str,
-    user_id: str,
-    knowledge_base_id: str,
-    chunks: list[Chunk],
-) -> None:
-    await conn.execute("DELETE FROM document_chunks WHERE document_id = $1", document_id)
-    if not chunks:
-        return
-    # source_content mirrors content at ingest; highlight CRUD may later
-    # rewrite content with annotations appended. See api/services/highlight_chunks.
-    await conn.executemany(
-        "INSERT INTO document_chunks "
-        "(document_id, user_id, knowledge_base_id, chunk_index, content, source_content, page, start_char, "
-        " token_count, header_breadcrumb) "
-        "VALUES ($1, $2, $3, $4, $5, $5, $6, $7, $8, $9)",
-        [
-            (document_id, user_id, knowledge_base_id, c.index, c.content, c.page,
-             c.start_char, c.token_count, c.header_breadcrumb)
-            for c in chunks
-        ],
-    )
 
 
 async def store_chunks_sqlite(

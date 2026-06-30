@@ -19,13 +19,11 @@ import {
   upsertHighlight,
 } from "@/lib/api";
 import {
-  getMode,
   getApiUrl,
   getSelectedFolderPath,
   getSelectedKnowledgeBaseId,
   isDomainDisabled,
   setSelectedKnowledgeBaseId,
-  type Mode,
 } from "@/lib/settings";
 
 export default defineContentScript({
@@ -72,11 +70,6 @@ const LAZY_IMAGE_SRCSET_ATTRIBUTES = [
   "data-srcset",
   "data-lazy-srcset",
 ];
-
-interface SessionResponse {
-  accessToken: string | null;
-  userId: string | null;
-}
 
 interface PendingPageState {
   url: string;
@@ -366,10 +359,8 @@ class HighlightController {
   private documentId: string | null = null;
   private knowledgeBaseId: string | null = null;
   private folderPath = "/webclipper/";
-  private mode: Mode = "cloud";
   private version: number | null = null;
   private apiUrl: string | null = null;
-  private accessToken: string | null = null;
   private pill: HTMLElement | null = null;
   private popover: HTMLElement | null = null;
   private saveTimer: number | null = null;
@@ -390,33 +381,16 @@ class HighlightController {
     chrome.runtime.onMessage.addListener(this.onRuntimeMessage);
   }
 
-  private async ensureSession(): Promise<string | null> {
-    // Local mode is intentionally unauthenticated, so never hand the cloud
-    // Supabase token to a user-configured local URL.
-    if (this.mode === "local") {
-      this.accessToken = null;
-      return null;
-    }
-    const session: SessionResponse | undefined = await chrome.runtime.sendMessage({ type: "GET_SESSION" });
-    this.accessToken = session?.accessToken ?? null;
-    return this.accessToken;
-  }
-
   private async bootstrap() {
     try {
-      this.mode = await getMode();
       this.apiUrl = await getApiUrl();
       this.knowledgeBaseId = await getSelectedKnowledgeBaseId();
       this.folderPath = await getSelectedFolderPath();
-      await this.ensureSession();
-      // In cloud mode, no token means the user is signed out. Keep the page
-      // untouched until they sign in. Local mode is intentionally unauthenticated.
-      if (this.mode !== "local" && !this.accessToken) return;
       await this.restorePendingPageState();
       const url = canonicalizeUrl(location.href);
       let doc;
       try {
-        doc = await getDocumentByUrl(this.apiUrl, this.accessToken, url);
+        doc = await getDocumentByUrl(this.apiUrl, url);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         // 401 means the stored session is stale; sign-in flow will refresh.
@@ -449,9 +423,8 @@ class HighlightController {
   private async refreshAfterSave(documentId: string, flushPending = true) {
     if (!this.apiUrl) return;
     this.documentId = documentId;
-    await this.ensureSession();
     try {
-      const fresh = await getHighlights(this.apiUrl, this.accessToken, documentId);
+      const fresh = await getHighlights(this.apiUrl, documentId);
       this.version = fresh.version;
       // Server may have stripped/normalized; trust its copy if non-empty
       if (fresh.highlights && fresh.highlights.length) {
@@ -514,12 +487,6 @@ class HighlightController {
   };
 
   private maybeShowPill() {
-    if (this.mode !== "local" && !this.accessToken) {
-      void this.ensureSession().then((token) => {
-        if (token) this.maybeShowPill();
-      });
-      return;
-    }
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
     const range = sel.getRangeAt(0);
@@ -926,7 +893,7 @@ class HighlightController {
     }
 
     if (!this.apiUrl) return null;
-    const list = await fetchKnowledgeBases(this.apiUrl, this.accessToken);
+    const list = await fetchKnowledgeBases(this.apiUrl);
     const first = list[0]?.id ?? null;
     if (first) {
       this.knowledgeBaseId = first;
@@ -949,11 +916,6 @@ class HighlightController {
   private async createDocumentFromCurrentPage(): Promise<boolean> {
     try {
       this.apiUrl = this.apiUrl ?? await getApiUrl();
-      await this.ensureSession();
-      if (this.mode !== "local" && !this.accessToken) {
-        this.showToast("Sign in to save highlights");
-        return false;
-      }
 
       const knowledgeBaseId = await this.resolveKnowledgeBaseId();
       if (!knowledgeBaseId) {
@@ -964,7 +926,7 @@ class HighlightController {
       this.showToast("Saving article...");
       const highlightsToSave = this.highlights.length ? [...this.highlights] : [];
       this.autoSaveIncludedHighlightIds = new Set(highlightsToSave.map((h) => h.id));
-      const result = await saveWebPage(this.apiUrl, this.accessToken, knowledgeBaseId, {
+      const result = await saveWebPage(this.apiUrl, knowledgeBaseId, {
         url: canonicalizeUrl(location.href),
         title: document.title || location.href,
         path: this.folderPath,
@@ -1011,7 +973,6 @@ class HighlightController {
       return;
     }
     try {
-      await this.ensureSession();
       const existing = this.highlights.find((h) => h.id === highlight.id);
       const payload = existing
         ? {
@@ -1022,7 +983,6 @@ class HighlightController {
         : highlight;
       const result = await upsertHighlight(
         this.apiUrl,
-        this.accessToken,
         this.documentId,
         payload,
       );
@@ -1046,10 +1006,8 @@ class HighlightController {
       return;
     }
     try {
-      await this.ensureSession();
       const result = await deleteHighlight(
         this.apiUrl,
-        this.accessToken,
         this.documentId,
         id,
       );
@@ -1080,7 +1038,6 @@ class HighlightController {
     }
     this.isSaving = true;
     try {
-      await this.ensureSession();
       const saved = await this.ensureDocumentSavedForHighlights();
       if (!saved || !this.documentId) {
         this.savePendingPageState();
@@ -1091,7 +1048,6 @@ class HighlightController {
       for (const id of Array.from(this.deletedHighlightIds)) {
         const result = await deleteHighlight(
           this.apiUrl,
-          this.accessToken,
           this.documentId,
           id,
         );
@@ -1102,14 +1058,13 @@ class HighlightController {
       for (const highlight of this.highlights) {
         const result = await upsertHighlight(
           this.apiUrl,
-          this.accessToken,
           this.documentId,
           highlight,
         );
         this.mergeServerHighlights(result);
       }
 
-      const fresh = await getHighlights(this.apiUrl, this.accessToken, this.documentId);
+      const fresh = await getHighlights(this.apiUrl, this.documentId);
       this.version = fresh.version;
       this.highlights = mergeHighlightsById(fresh.highlights ?? [], this.highlights);
       this.restoredPendingState = false;
@@ -1119,7 +1074,7 @@ class HighlightController {
       if (conflict && this.documentId) {
         // Refetch and merge — last writer wins on duplicates by id
         try {
-          const fresh = await getHighlights(this.apiUrl, this.accessToken, this.documentId);
+          const fresh = await getHighlights(this.apiUrl, this.documentId);
           const ids = new Set(this.highlights.map((h) => h.id));
           const merged = [...this.highlights];
           for (const h of fresh.highlights) {

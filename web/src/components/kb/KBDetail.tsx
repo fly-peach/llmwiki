@@ -135,7 +135,6 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
 
   // ─── Upload tracking (global progress panel) ─────────────────
   const addUpload = useUploadStore((s) => s.addUpload)
-  const setUploadProgress = useUploadStore((s) => s.setProgress)
   const markUploadProcessing = useUploadStore((s) => s.markProcessing)
   const markUploadFailed = useUploadStore((s) => s.markFailed)
   const reconcileUploads = useUploadStore((s) => s.reconcileDocuments)
@@ -613,26 +612,6 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
     input.click()
   }
 
-  const tusUploadFile = React.useCallback(async (file: File, targetPath: string = '/'): Promise<void> => {
-    const t = getToken()
-    if (!t) return Promise.reject(new Error('Not authenticated'))
-    const uploadId = crypto.randomUUID()
-    addUpload({ id: uploadId, filename: file.name, kbId, kbSlug, path: targetPath })
-    const { Upload } = await import('tus-js-client')
-    return new Promise((resolve, reject) => {
-      const upload = new Upload(file, {
-        endpoint: `${API_URL}/v1/uploads`,
-        retryDelays: [0, 1000, 3000, 5000],
-        metadata: { filename: file.name, knowledge_base_id: kbId, path: targetPath },
-        headers: { Authorization: `Bearer ${t}` },
-        onProgress: (sent, total) => setUploadProgress(uploadId, total > 0 ? sent / total : 0),
-        onError: (error) => { markUploadFailed(uploadId); reject(error) },
-        onSuccess: () => { markUploadProcessing(uploadId); resolve() },
-      })
-      upload.start()
-    })
-  }, [kbId, kbSlug, addUpload, setUploadProgress, markUploadProcessing, markUploadFailed])
-
   const uploadFiles = React.useCallback((files: File[], targetPath: string = '/') => {
     const t = getToken()
     if (!t || !userId) return
@@ -666,22 +645,18 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
       } else {
         const supportedTypes = new Set(['pdf', 'pptx', 'ppt', 'docx', 'doc', 'png', 'jpg', 'jpeg', 'webp', 'gif', 'xlsx', 'xls', 'csv', 'html', 'htm'])
         if (ext && supportedTypes.has(ext)) {
-          if (process.env.NEXT_PUBLIC_MODE === 'local') {
-            const uploadId = crypto.randomUUID()
-            addUpload({ id: uploadId, filename: file.name, kbId, kbSlug, path: targetPath })
-            const formData = new FormData()
-            formData.append('file', file)
-            formData.append('path', targetPath)
-            try {
-              const res = await fetch(`${API_URL}/v1/upload`, { method: 'POST', body: formData })
-              if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
-              const data = await res.json()
-              setDocuments((prev) => [data, ...prev])
-              markUploadProcessing(uploadId)
-            } catch { markUploadFailed(uploadId) }
-          } else {
-            await tusUploadFile(file, targetPath)
-          }
+          const uploadId = crypto.randomUUID()
+          addUpload({ id: uploadId, filename: file.name, kbId, kbSlug, path: targetPath })
+          const formData = new FormData()
+          formData.append('file', file)
+          formData.append('path', targetPath)
+          try {
+            const res = await fetch(`${API_URL}/v1/upload`, { method: 'POST', body: formData })
+            if (!res.ok) throw new Error(`Upload failed: ${res.status}`)
+            const data = await res.json()
+            setDocuments((prev) => [data, ...prev])
+            markUploadProcessing(uploadId)
+          } catch { markUploadFailed(uploadId) }
         } else {
           toast.info(`${ext} files not yet supported`)
         }
@@ -696,7 +671,7 @@ export function KBDetail({ kbId, kbSlug, kbName, viewMode, routeFilesPath }: Pro
         navigateToView('files')
       }
     })
-  }, [kbId, kbSlug, userId, tusUploadFile, documents, sourceDocs.length, navigateToView, addUpload, markUploadProcessing, markUploadFailed])
+  }, [kbId, kbSlug, userId, documents, sourceDocs.length, navigateToView, addUpload, markUploadProcessing, markUploadFailed])
 
   React.useEffect(() => {
     reconcileUploads(kbId, documents)

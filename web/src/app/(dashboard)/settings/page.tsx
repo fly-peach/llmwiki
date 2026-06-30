@@ -1,11 +1,10 @@
 'use client'
 
 import * as React from 'react'
-import { Copy, Check, ArrowLeft } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { apiFetch } from '@/lib/api'
-import { buildOAuthMcpConfig, MCP_URL } from '@/lib/mcp'
 import { useUserStore } from '@/stores'
 
 interface Usage {
@@ -29,9 +28,6 @@ export default function SettingsPage() {
   const token = useUserStore((s) => s.accessToken)
   const [usage, setUsage] = React.useState<Usage | null>(null)
   const [loading, setLoading] = React.useState(true)
-  const [configCopied, setConfigCopied] = React.useState(false)
-
-  const oauthConfigJson = buildOAuthMcpConfig()
 
   React.useEffect(() => {
     if (!token) return
@@ -40,16 +36,6 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [token])
-
-  const handleCopyConfig = async () => {
-    try {
-      await navigator.clipboard.writeText(oauthConfigJson)
-      setConfigCopied(true)
-      setTimeout(() => setConfigCopied(false), 2000)
-    } catch {
-      console.error('Failed to copy')
-    }
-  }
 
   return (
     <div className="max-w-2xl mx-auto p-8">
@@ -121,43 +107,15 @@ export default function SettingsPage() {
 
       {/* MCP Config */}
       <section>
-        <h2 className="text-base font-medium">
-          {process.env.NEXT_PUBLIC_MODE === 'local' ? 'Connect Claude' : 'Connect via OAuth'}
-        </h2>
+        <h2 className="text-base font-medium">Connect Claude</h2>
         <p className="mt-2 text-sm text-muted-foreground">
-          {process.env.NEXT_PUBLIC_MODE === 'local'
-            ? 'Run this command to get the Claude Desktop / Claude Code MCP config for this workspace:'
-            : 'Add this configuration to your MCP client. On first connection, it should prompt you to sign in with Supabase.'
-          }
+          Run this command to get the Claude Desktop / Claude Code MCP config for this workspace:
         </p>
         <div className="relative mt-4">
           <pre className="rounded-lg bg-muted border border-border p-4 text-sm font-mono overflow-x-auto text-foreground">
-            {process.env.NEXT_PUBLIC_MODE === 'local'
-              ? 'llmwiki mcp-config <workspace-path>'
-              : oauthConfigJson
-            }
+            {'llmwiki mcp-config <workspace-path>'}
           </pre>
-          {process.env.NEXT_PUBLIC_MODE !== 'local' && (
-            <button
-              onClick={handleCopyConfig}
-              className={cn(
-                'absolute top-3 right-3 flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs transition-colors cursor-pointer',
-                configCopied
-                  ? 'bg-green-500/10 text-green-600 dark:text-green-400'
-                  : 'bg-background border border-border text-muted-foreground hover:text-foreground hover:bg-accent'
-              )}
-            >
-              {configCopied ? <><Check size={12} />Copied</> : <><Copy size={12} />Copy</>}
-            </button>
-          )}
         </div>
-        {process.env.NEXT_PUBLIC_MODE !== 'local' && (
-          <p className="mt-3 text-xs text-muted-foreground">
-            MCP URL:
-            {' '}
-            <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">{MCP_URL}</code>
-          </p>
-        )}
       </section>
     </div>
   )

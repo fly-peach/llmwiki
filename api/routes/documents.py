@@ -1,10 +1,9 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from deps import get_document_service
-from infra.rate_limit import limiter
 from services.base import DocumentService
 from services.types import (
     BulkDelete, CreateNote, CreateWebClip,
@@ -68,9 +67,7 @@ async def create_note(
 
 
 @router.post("/v1/knowledge-bases/{kb_id}/documents/web", status_code=201)
-@limiter.limit("30/minute")
 async def create_web_clip(
-    request: Request,
     kb_id: UUID,
     body: CreateWebClip,
     service: Annotated[DocumentService, Depends(get_document_service)],

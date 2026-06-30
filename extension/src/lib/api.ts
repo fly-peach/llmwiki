@@ -60,16 +60,8 @@ export interface HighlightsResponse {
   highlights: Highlight[];
 }
 
-function authHeaders(accessToken: string | null): Record<string, string> {
-  if (!accessToken) return {};
-  return { Authorization: `Bearer ${accessToken}` };
-}
-
-function jsonHeaders(accessToken: string | null): Record<string, string> {
-  return {
-    ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
-    "Content-Type": "application/json",
-  };
+function jsonHeaders(): Record<string, string> {
+  return { "Content-Type": "application/json" };
 }
 
 // ── smartFetch ──────────────────────────────────────────────
@@ -142,23 +134,19 @@ async function smartFetch(url: string, init?: SmartFetchInit): Promise<SmartFetc
 
 export async function fetchKnowledgeBases(
   apiUrl: string,
-  accessToken: string | null,
 ): Promise<KnowledgeBase[]> {
-  const res = await smartFetch(`${apiUrl}/v1/knowledge-bases`, {
-    headers: authHeaders(accessToken),
-  });
+  const res = await smartFetch(`${apiUrl}/v1/knowledge-bases`);
   if (!res.ok) throw new Error(`Failed to fetch knowledge bases: ${res.status}`);
   return res.data as KnowledgeBase[];
 }
 
 export async function createKnowledgeBase(
   apiUrl: string,
-  accessToken: string | null,
   name: string,
 ): Promise<KnowledgeBase> {
   const res = await fetch(`${apiUrl}/v1/knowledge-bases`, {
     method: "POST",
-    headers: jsonHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify({ name }),
   });
   if (!res.ok) throw new Error(`Failed to create knowledge base: ${res.status}`);
@@ -167,7 +155,6 @@ export async function createKnowledgeBase(
 
 export async function saveWebPage(
   apiUrl: string,
-  accessToken: string | null,
   knowledgeBaseId: string,
   payload: { url: string; title: string; html: string; path?: string; highlights?: Highlight[] },
 ): Promise<SaveResult> {
@@ -175,7 +162,7 @@ export async function saveWebPage(
     `${apiUrl}/v1/knowledge-bases/${knowledgeBaseId}/documents/web`,
     {
       method: "POST",
-      headers: jsonHeaders(accessToken),
+      headers: jsonHeaders(),
       body: JSON.stringify(payload),
     },
   );
@@ -187,12 +174,10 @@ export async function saveWebPage(
 
 export async function getDocumentByUrl(
   apiUrl: string,
-  accessToken: string | null,
   url: string,
 ): Promise<DocumentByUrl | null> {
   const res = await smartFetch(
     `${apiUrl}/v1/documents/by-url?url=${encodeURIComponent(url)}`,
-    { headers: authHeaders(accessToken) },
   );
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Lookup failed: ${res.status}`);
@@ -201,12 +186,10 @@ export async function getDocumentByUrl(
 
 export async function getHighlights(
   apiUrl: string,
-  accessToken: string | null,
   documentId: string,
 ): Promise<HighlightsResponse> {
   const res = await smartFetch(
     `${apiUrl}/v1/documents/${documentId}/highlights`,
-    { headers: authHeaders(accessToken) },
   );
   if (!res.ok) throw new Error(`Fetch highlights failed: ${res.status}`);
   return res.data as HighlightsResponse;
@@ -214,7 +197,6 @@ export async function getHighlights(
 
 export async function replaceHighlights(
   apiUrl: string,
-  accessToken: string | null,
   documentId: string,
   highlights: Highlight[],
   expectedVersion?: number,
@@ -223,7 +205,7 @@ export async function replaceHighlights(
     `${apiUrl}/v1/documents/${documentId}/highlights`,
     {
       method: "PATCH",
-      headers: jsonHeaders(accessToken),
+      headers: jsonHeaders(),
       body: JSON.stringify({ highlights, expectedVersion }),
     },
   );
@@ -238,13 +220,12 @@ export async function replaceHighlights(
 
 export async function moveDocument(
   apiUrl: string,
-  accessToken: string | null,
   documentId: string,
   knowledgeBaseId: string,
 ): Promise<void> {
   const res = await smartFetch(`${apiUrl}/v1/documents/${documentId}`, {
     method: "PATCH",
-    headers: jsonHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify({ knowledge_base_id: knowledgeBaseId }),
   });
   if (!res.ok) {
@@ -254,7 +235,6 @@ export async function moveDocument(
 
 export async function upsertHighlight(
   apiUrl: string,
-  accessToken: string | null,
   documentId: string,
   highlight: Highlight,
   expectedVersion?: number,
@@ -263,7 +243,7 @@ export async function upsertHighlight(
     `${apiUrl}/v1/documents/${documentId}/highlights`,
     {
       method: "POST",
-      headers: jsonHeaders(accessToken),
+      headers: jsonHeaders(),
       body: JSON.stringify({ highlight, expectedVersion }),
     },
   );
@@ -278,7 +258,6 @@ export async function upsertHighlight(
 
 export async function deleteHighlight(
   apiUrl: string,
-  accessToken: string | null,
   documentId: string,
   highlightId: string,
   expectedVersion?: number,
@@ -290,7 +269,6 @@ export async function deleteHighlight(
     `${apiUrl}/v1/documents/${documentId}/highlights/${encodeURIComponent(highlightId)}${params}`,
     {
       method: "DELETE",
-      headers: authHeaders(accessToken),
     },
   );
   if (res.status === 409) {
@@ -304,10 +282,8 @@ export async function deleteHighlight(
 
 export async function savePdf(
   apiUrl: string,
-  accessToken: string | null,
   pdfBytes: Uint8Array,
   filename: string,
-  knowledgeBaseId: string,
   path = "/webclipper/",
 ): Promise<SaveResult> {
   // Copy bytes into a fresh ArrayBuffer so the resulting Blob/body matches
@@ -316,61 +292,14 @@ export async function savePdf(
   const pdfBuffer = new ArrayBuffer(pdfBytes.byteLength);
   new Uint8Array(pdfBuffer).set(pdfBytes);
 
-  // Local mode: use multipart upload
-  if (!accessToken) {
-    const form = new FormData();
-    form.append("file", new Blob([pdfBuffer], { type: "application/pdf" }), filename);
-    form.append("path", path);
-    const res = await fetch(`${apiUrl}/v1/upload`, {
-      method: "POST",
-      body: form,
-    });
-    if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
-    const data = await res.json();
-    return { id: data.id, status: "pending" };
-  }
-
-  // Cloud mode: TUS upload
-  const metadata = [
-    `filename ${btoa(filename)}`,
-    `knowledge_base_id ${btoa(knowledgeBaseId)}`,
-    `path ${btoa(path)}`,
-  ].join(",");
-
-  const createRes = await fetch(`${apiUrl}/v1/uploads`, {
+  const form = new FormData();
+  form.append("file", new Blob([pdfBuffer], { type: "application/pdf" }), filename);
+  form.append("path", path);
+  const res = await fetch(`${apiUrl}/v1/upload`, {
     method: "POST",
-    headers: {
-      ...authHeaders(accessToken),
-      "Tus-Resumable": "1.0.0",
-      "Upload-Length": String(pdfBuffer.byteLength),
-      "Upload-Metadata": metadata,
-    },
+    body: form,
   });
-  if (!createRes.ok) {
-    const text = await createRes.text();
-    throw new Error(`Upload init failed (${createRes.status}): ${text}`);
-  }
-
-  const location = createRes.headers.get("Location");
-  if (!location) throw new Error("No Location header in TUS response");
-  const uploadUrl = location.startsWith("http")
-    ? location
-    : `${apiUrl}${location}`;
-
-  const patchRes = await fetch(uploadUrl, {
-    method: "PATCH",
-    headers: {
-      ...authHeaders(accessToken),
-      "Tus-Resumable": "1.0.0",
-      "Upload-Offset": "0",
-      "Content-Type": "application/offset+octet-stream",
-    },
-    body: pdfBuffer,
-  });
-  if (!patchRes.ok && patchRes.status !== 204) {
-    throw new Error(`Upload failed: ${patchRes.status}`);
-  }
-
-  const documentId = patchRes.headers.get("X-Document-Id") ?? "";
-  return { id: documentId, status: "pending" };
+  if (!res.ok) throw new Error(`Upload failed: ${res.status}`);
+  const data = await res.json();
+  return { id: data.id, status: "pending" };
 }

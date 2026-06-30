@@ -1,6 +1,6 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 import { ArrowRight, BookOpen, FileText, PenTool, Search, GitBranch } from 'lucide-react'
-import { AuthRedirect } from './AuthRedirect'
 import { MotionDiv, MotionP } from './LandingMotion'
 
 const ease: [number, number, number, number] = [0.16, 1, 0.3, 1]
@@ -29,9 +29,10 @@ const jsonLd = {
 }
 
 export default function LandingPage() {
+  // Local-only mode: no landing/login flow — go straight to the app.
+  redirect('/wikis')
   return (
     <div className="min-h-svh bg-background text-foreground">
-      <AuthRedirect />
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}

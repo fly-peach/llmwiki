@@ -1,43 +1,39 @@
-import React, { useEffect, useRef, useState } from "react";
-import AuthGate from "./components/AuthGate";
+import React, { useEffect, useState } from "react";
 import SaveForm from "./components/SaveForm";
 import Settings from "./components/Settings";
 import {
   checkLocalHealth,
-  getMode,
   getApiUrl,
   isBuiltInDisabledHost,
   isDomainDisabled,
   setDomainDisabled,
-  setMode,
-  type Mode,
 } from "@/lib/settings";
 
 type View = "main" | "settings";
 
-type AuthState =
-  | { status: "loading" }
-  | { status: "signed_out" }
-  | { status: "signed_in"; accessToken: string }
-  | { status: "local" };
-
 export default function App() {
   const [view, setView] = useState<View>("main");
-  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [apiUrl, setApiUrl] = useState("");
-  const [mode, setModeState] = useState<Mode>("cloud");
+  const [connectionError, setConnectionError] = useState<string | null>(null);
   const [currentHost, setCurrentHost] = useState<string | null>(null);
-  const [isPdf, setIsPdf] = useState(false);
   const [hostDisabled, setHostDisabled] = useState(false);
   const [showReloadHint, setShowReloadHint] = useState(false);
-  const authNoticeTimer = useRef<number | null>(null);
 
   useEffect(() => {
-    init().catch(() => setAuth({ status: "signed_out" }));
+    init();
     detectCurrentHost();
   }, []);
+
+  async function init() {
+    const url = await getApiUrl();
+    setApiUrl(url);
+    const connected = await checkLocalHealth(url);
+    setConnectionError(
+      connected
+        ? null
+        : `Could not connect to ${url}/health. Check your API URL in settings.`,
+    );
+  }
 
   async function detectCurrentHost() {
     try {
@@ -45,11 +41,7 @@ export default function App() {
       if (!tab?.url) return;
       const host = new URL(tab.url).hostname.replace(/^www\./, "");
       if (!host) return;
-      const looksLikePdf =
-        tab.url.toLowerCase().endsWith(".pdf") ||
-        (tab.title?.toLowerCase().endsWith(".pdf") ?? false);
       setCurrentHost(host);
-      setIsPdf(looksLikePdf);
       setHostDisabled(await isDomainDisabled(host));
     } catch {
       // Restricted page or no permissions; the toggle button stays hidden.
@@ -65,130 +57,13 @@ export default function App() {
     window.setTimeout(() => setShowReloadHint(false), 3000);
   }
 
-  useEffect(() => {
-    return () => {
-      if (authNoticeTimer.current) window.clearTimeout(authNoticeTimer.current);
-    };
-  }, []);
-
-  function showAuthNotice(message: string) {
-    setAuthNotice(message);
-    if (authNoticeTimer.current) window.clearTimeout(authNoticeTimer.current);
-    authNoticeTimer.current = window.setTimeout(() => {
-      setAuthNotice(null);
-      authNoticeTimer.current = null;
-    }, 3500);
-  }
-
-  async function init() {
-    const currentMode = await getMode();
-    const url = await getApiUrl();
-    setModeState(currentMode);
-    setApiUrl(url);
-
-    if (currentMode === "local") {
-      const connected = await checkLocalHealth(url);
-      if (!connected) {
-        await setMode("cloud");
-        const cloudUrl = await getApiUrl();
-        setModeState("cloud");
-        setApiUrl(cloudUrl);
-        setAuthError(`Could not connect to ${url}/health. Switched back to cloud.`);
-        await checkSession();
-        return;
-      }
-      setAuth({ status: "local" });
-    } else {
-      await checkSession();
-    }
-  }
-
-  async function checkSession() {
-    // MV3 service worker may be cold; sendMessage can reject or resolve
-    // undefined until it wakes, so retry instead of hanging on "loading".
-    let response: { accessToken?: string | null } | undefined;
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        response = await chrome.runtime.sendMessage({ type: "GET_SESSION" });
-      } catch {
-        response = undefined;
-      }
-      if (response !== undefined) break;
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-    const accessToken = response?.accessToken ?? null;
-    setAuth(accessToken ? { status: "signed_in", accessToken } : { status: "signed_out" });
-  }
-
-  async function handleSignIn() {
-    setAuthError(null);
-    setAuth({ status: "loading" });
-    const result = await chrome.runtime.sendMessage({
-      type: "SIGN_IN_WITH_GOOGLE",
-    });
-    if (result.success) {
-      await checkSession();
-      showAuthNotice("Signed in to LLM Wiki");
-    } else {
-      setAuthError(result.error ?? "Sign in failed");
-      setAuth({ status: "signed_out" });
-    }
-  }
-
-  async function handlePasswordSignIn(email: string, password: string) {
-    setAuthError(null);
-    setAuth({ status: "loading" });
-    const result = await chrome.runtime.sendMessage({
-      type: "SIGN_IN_WITH_PASSWORD",
-      email,
-      password,
-    });
-    if (result.success) {
-      await checkSession();
-      showAuthNotice("Signed in to LLM Wiki");
-    } else {
-      setAuthError(result.error ?? "Sign in failed");
-      setAuth({ status: "signed_out" });
-    }
-  }
-
-  async function handleSignOut() {
-    setAuthError(null);
-    setAuthNotice(null);
-    await chrome.runtime.sendMessage({ type: "SIGN_OUT" });
-    setAuth({ status: "signed_out" });
-  }
-
-  async function handleModeChange(newMode: Mode) {
-    setModeState(newMode);
-    const url = await getApiUrl();
-    setApiUrl(url);
-
-    if (newMode === "local") {
-      setAuthError(null);
-      setAuthNotice(null);
-      setAuth({ status: "local" });
-    } else {
-      setAuth({ status: "loading" });
-      await checkSession();
-    }
-  }
-
   if (view === "settings") {
     return (
       <div className="w-full overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50 p-4 font-sans text-zinc-950 shadow-[0_8px_30px_rgba(15,23,42,0.14),0_1px_2px_rgba(15,23,42,0.08)] ring-1 ring-white/80">
-        <Settings
-          onBack={() => setView("main")}
-          onModeChange={handleModeChange}
-          isSignedIn={auth.status === "signed_in"}
-          onSignOut={handleSignOut}
-        />
+        <Settings onBack={() => setView("main")} />
       </div>
     );
   }
-
-  const isReady = auth.status === "signed_in" || auth.status === "local";
-  const accessToken = auth.status === "signed_in" ? auth.accessToken : null;
 
   const showHostToggle = !!currentHost && !isBuiltInDisabledHost(currentHost);
 
@@ -200,11 +75,9 @@ export default function App() {
           {currentHost && (
             <span className="min-w-0 truncate font-medium text-zinc-700">{currentHost}</span>
           )}
-          {mode === "local" && (
-            <span className="rounded border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">
-              local
-            </span>
-          )}
+          <span className="rounded border border-zinc-200 bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium text-zinc-600">
+            local
+          </span>
         </div>
         <div className="flex shrink-0 items-center gap-0.5">
           {showHostToggle && (
@@ -245,36 +118,13 @@ export default function App() {
         </div>
       )}
 
-      {/* Body */}
-      {auth.status === "loading" && (
-        <div className="flex items-center justify-center py-8">
-          <div className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-200 border-t-zinc-800" />
+      {connectionError && (
+        <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          {connectionError}
         </div>
       )}
 
-      {auth.status === "signed_out" && (
-        <>
-          {authError && (
-            <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
-              {authError}
-            </div>
-          )}
-          <AuthGate
-            onSignIn={handleSignIn}
-            onPasswordSignIn={handlePasswordSignIn}
-          />
-        </>
-      )}
-
-      {authNotice && auth.status === "signed_in" && (
-        <div className="mb-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
-          {authNotice}
-        </div>
-      )}
-
-      {isReady && apiUrl && (
-        <SaveForm apiUrl={apiUrl} accessToken={accessToken} />
-      )}
+      {apiUrl && <SaveForm apiUrl={apiUrl} />}
     </div>
   );
 }

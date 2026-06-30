@@ -31,9 +31,9 @@ LLM Wiki is designed to work at three distinct scales:
 
 # Getting started
 
-LLM Wiki supports two modes: remote & local. You can self-host the remote app, or try it out for free at llmwiki.app. Or you can git clone the repository, and use the CLI to get started.
+LLM Wiki runs **locally**: git clone the repository and use the CLI. Your files stay on your machine — nothing is uploaded. The workspace is backed by SQLite (the search index) and your filesystem (the source of truth).
 
-Here's how to get started locally.
+Here's how to get started.
 
 **Requirements:** Python 3.11+, Node.js 20+. Optional: [LibreOffice](https://www.libreoffice.org/) to extract Word/PowerPoint files, and a `MISTRAL_API_KEY` for higher-quality PDF OCR.
 
@@ -81,7 +81,7 @@ There are two ways to get material into your wiki.
 
 [Install from the Chrome Web Store →](https://chromewebstore.google.com/detail/llm-wiki/dibilaenlekndomfbampadehjeahemha)
 
-The extension works in both modes. By default it talks to the hosted app; flip the toggle to **Local** and it points at your running workspace at `http://localhost:8000` — so anything you clip while `./llmwiki open` is running goes straight into your local wiki. Pick a destination folder (default `/webclipper/`) and start saving.
+The extension talks to your running workspace at `http://localhost:8000` — so anything you clip while `./llmwiki open` is running goes straight into your local wiki. Pick a destination folder (default `/webclipper/`) and start saving.
 
 # Supported files
 
@@ -120,7 +120,7 @@ The filesystem is the source of truth; the index just makes it fast to search. A
 
 # What Claude can do
 
-Once connected over MCP, Claude works the wiki through a small, deliberate set of tools — the same set in local and hosted mode:
+Once connected over MCP, Claude works the wiki through a small, deliberate set of tools:
 
 | Tool | What it does |
 |------|--------------|
@@ -135,7 +135,7 @@ Once connected over MCP, Claude works the wiki through a small, deliberate set o
 | `delete` | Remove pages or sources by path or glob (`overview.md` and `log.md` are protected). |
 | `lint` | Deterministic hygiene checks — citation resolution, dangling links, orphan and stale pages, frontmatter consistency. |
 
-Writes go to the source of truth first — a file on disk in local mode, Postgres in hosted mode — then the search index updates. So when Claude creates `/wiki/concepts/attention.md`, it's a real file (or row) immediately, not a pending change.
+Writes go to the source of truth first — a file on disk — then the search index updates. So when Claude creates `/wiki/concepts/attention.md`, it's a real file immediately, not a pending change.
 
 # Architecture
 
@@ -143,14 +143,13 @@ Three kinds of client reach the workspace, through two entry services, over one 
 
 ```
   Claude  ──MCP──►  MCP server ─┐
-                                │                local mode  →  SQLite + your filesystem
-  Web app ──HTTP─►  API ────────┼──►  VaultFS  ─┤
-                                │                hosted mode →  Postgres + S3
+                                │
+  Web app ──HTTP─►  API ────────┼──►  VaultFS  ──►  SQLite + your filesystem
+                                │
   Chrome  ──HTTP─►  API ────────┘
-                      └──►  Converter  (PDF / Office text extraction)
 ```
 
-`VaultFS` is the seam: the same wiki operations run against a SQLite-plus-filesystem backend locally or a Postgres-plus-S3 backend when hosted, so Claude's tools behave identically either way. The MCP server speaks to Claude; the API serves the web app and the Chrome extension; the converter handles heavier PDF and Office extraction. Whatever the backend, the durable store is the source of truth and the search index is derived from it.
+`VaultFS` is the seam: wiki operations run against a SQLite-plus-filesystem backend. The MCP server speaks to Claude; the API serves the web app and the Chrome extension. The filesystem is the source of truth and the SQLite index is derived from it — delete `.llmwiki/index.db` and `./llmwiki reindex` rebuilds it from your files. PDF and Office text extraction happens in-process (LibreOffice for Office formats; optional Mistral OCR for higher-quality PDF tables).
 
 # What's next
 

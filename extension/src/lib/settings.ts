@@ -1,30 +1,23 @@
-export type Mode = "cloud" | "local";
+export type Mode = "local";
 
-const STORAGE_KEY = "llmwiki_mode";
 const LOCAL_URL_KEY = "llmwiki_local_url";
 const SELECTED_KB_KEY = "llmwiki_selected_knowledge_base_id";
 const SELECTED_FOLDER_KEY = "llmwiki_selected_folder_path";
 
-const DEFAULT_CLOUD_URL = import.meta.env.VITE_API_BASE_URL ?? "https://api.llmwiki.app";
 const DEFAULT_LOCAL_URL = "http://localhost:8000";
 const LOCAL_HEALTH_TIMEOUT_MS = 2500;
 
 export async function getMode(): Promise<Mode> {
-  const result = await chrome.storage.local.get(STORAGE_KEY);
-  return result[STORAGE_KEY] === "local" ? "local" : "cloud";
+  return "local";
 }
 
-export async function setMode(mode: Mode): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEY]: mode });
+export async function setMode(_mode: Mode): Promise<void> {
+  // Local-only build: mode is always "local". Kept for API compatibility.
 }
 
 export async function getApiUrl(): Promise<string> {
-  const mode = await getMode();
-  if (mode === "local") {
-    const result = await chrome.storage.local.get(LOCAL_URL_KEY);
-    return result[LOCAL_URL_KEY] || DEFAULT_LOCAL_URL;
-  }
-  return DEFAULT_CLOUD_URL;
+  const result = await chrome.storage.local.get(LOCAL_URL_KEY);
+  return result[LOCAL_URL_KEY] || DEFAULT_LOCAL_URL;
 }
 
 export async function setLocalUrl(url: string): Promise<void> {

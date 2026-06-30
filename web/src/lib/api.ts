@@ -1,6 +1,5 @@
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 const WS_URL = API_URL.replace(/^http/, 'ws')
-const isLocal = process.env.NEXT_PUBLIC_MODE === 'local'
 
 /** Thrown by apiFetch on non-2xx responses. Callers can branch on `.status`
  *  for clean retry logic (e.g. 409 conflict reconciliation). */
@@ -57,11 +56,6 @@ export async function apiFetch<T>(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...fetchOptions.headers as Record<string, string>,
-  }
-
-  // In local mode, skip Authorization header (API doesn't check it)
-  if (!isLocal && token) {
-    headers.Authorization = `Bearer ${token}`
   }
 
   try {

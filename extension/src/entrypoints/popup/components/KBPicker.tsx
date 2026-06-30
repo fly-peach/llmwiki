@@ -4,12 +4,11 @@ import { fetchKnowledgeBases, createKnowledgeBase } from "@/lib/api";
 
 interface Props {
   apiUrl: string;
-  accessToken: string | null;
   value: string | null;
   onChange: (id: string) => void;
 }
 
-export default function KBPicker({ apiUrl, accessToken, value, onChange }: Props) {
+export default function KBPicker({ apiUrl, value, onChange }: Props) {
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -19,7 +18,7 @@ export default function KBPicker({ apiUrl, accessToken, value, onChange }: Props
 
   useEffect(() => {
     loadKBs();
-  }, [apiUrl, accessToken]);
+  }, [apiUrl]);
 
   useEffect(() => {
     if (creating) inputRef.current?.focus();
@@ -29,7 +28,7 @@ export default function KBPicker({ apiUrl, accessToken, value, onChange }: Props
     setLoading(true);
     setError(null);
     try {
-      const list = await fetchKnowledgeBases(apiUrl, accessToken);
+      const list = await fetchKnowledgeBases(apiUrl);
       setKbs(list);
       const selectionValid = value !== null && list.some((kb) => kb.id === value);
       if (!selectionValid && list.length > 0) {
@@ -46,7 +45,7 @@ export default function KBPicker({ apiUrl, accessToken, value, onChange }: Props
     const name = newName.trim();
     if (!name) return;
     try {
-      const kb = await createKnowledgeBase(apiUrl, accessToken, name);
+      const kb = await createKnowledgeBase(apiUrl, name);
       setKbs((prev) => [kb, ...prev]);
       onChange(kb.id);
       setCreating(false);

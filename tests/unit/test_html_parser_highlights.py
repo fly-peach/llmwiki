@@ -400,7 +400,7 @@ async def test_webclip_asset_materialization_has_no_image_count_cap():
 
 def test_webclip_path_normalization_restricts_to_webclipper_root():
     from fastapi import HTTPException
-    from services.hosted import _normalize_webclip_path
+    from services.local import _normalize_webclip_path
 
     assert _normalize_webclip_path(None) == "/webclipper/"
     assert _normalize_webclip_path("webclipper/research") == "/webclipper/research/"
@@ -420,112 +420,6 @@ def test_parser_instances_are_single_use():
 
     with pytest.raises(RuntimeError):
         parser.parse()
-
-
-@pytest.mark.asyncio
-async def test_hosted_webclip_records_storage_size_for_markdown_artifact():
-    from services.hosted import HostedDocumentService
-
-    class Tx:
-        async def __aenter__(self):
-            return None
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeConn:
-        def __init__(self):
-            self.insert_args = None
-
-        def transaction(self):
-            return Tx()
-
-        async def execute(self, query, *args):
-            return None
-
-        async def fetchrow(self, query, *args):
-            if "storage_limit_bytes" in query:
-                return {"storage_limit_bytes": 100_000}
-            if "INSERT INTO documents" in query:
-                self.insert_args = args
-                return {
-                    "id": "doc-a",
-                    "knowledge_base_id": args[1],
-                    "user_id": args[2],
-                    "filename": args[3],
-                    "path": args[4],
-                    "title": args[5],
-                    "file_type": "md",
-                    "status": "ready",
-                    "tags": [],
-                    "date": None,
-                    "metadata": {},
-                    "error_message": None,
-                    "version": 0,
-                    "document_number": 1,
-                    "archived": False,
-                    "created_at": None,
-                    "updated_at": None,
-                }
-            return None
-
-        async def fetchval(self, query, *args):
-            if "FROM knowledge_bases" in query:
-                return args[0]
-            if "SUM(file_size)" in query:
-                return 0
-            return None
-
-    class FakePool(FakeConn):
-        def __init__(self):
-            super().__init__()
-            self.conn = FakeConn()
-
-        async def acquire(self):
-            return self.conn
-
-        async def release(self, conn):
-            return None
-
-    class FakeS3:
-        async def upload_bytes(self, key, data, content_type):
-            return None
-
-    pool = FakePool()
-    service = HostedDocumentService(pool=pool, user_id="user-a", s3=FakeS3())
-    await service.create_web_clip("kb-a", "https://example.com", "Title", "<p>Hello</p>")
-
-    assert pool.conn.insert_args is not None
-    assert pool.conn.insert_args[4] == "/webclipper/"
-    file_size = pool.conn.insert_args[6]
-    assert isinstance(file_size, int)
-    assert file_size > 0
-
-
-@pytest.mark.asyncio
-async def test_hosted_webclip_rejects_when_storage_quota_exceeded():
-    from fastapi import HTTPException
-    from services.hosted import HostedDocumentService
-
-    class FakePool:
-        async def fetchrow(self, query, *args):
-            if "storage_limit_bytes" in query:
-                return {"storage_limit_bytes": 3}
-            return None
-
-        async def fetchval(self, query, *args):
-            if "FROM knowledge_bases" in query:
-                return args[0]
-            if "SUM(file_size)" in query:
-                return 0
-            return None
-
-    service = HostedDocumentService(pool=FakePool(), user_id="user-a", s3=None)
-
-    with pytest.raises(HTTPException) as exc:
-        await service.create_web_clip("kb-a", "https://example.com", "Title", "<p>Hello</p>")
-
-    assert exc.value.status_code == 413
 
 
 # ── Highlight locator ─────────────────────────────────────

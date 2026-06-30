@@ -204,9 +204,7 @@ def cmd_serve(workspace: str, open_browser: bool = True) -> None:
         sys.exit(1)
 
     env = os.environ.copy()
-    env["MODE"] = "local"
     env["WORKSPACE_PATH"] = str(ws)
-    env["DATABASE_URL"] = ""
     env["APP_URL"] = "http://localhost:3000"
     env["API_URL"] = "http://localhost:8000"
 
@@ -225,7 +223,6 @@ def cmd_serve(workspace: str, open_browser: bool = True) -> None:
 
     # Start web dev server
     web_env = env.copy()
-    web_env["NEXT_PUBLIC_MODE"] = "local"
     web_env["NEXT_PUBLIC_API_URL"] = "http://localhost:8000"
     npm = shutil.which("pnpm") or shutil.which("npm")
     if npm is None:

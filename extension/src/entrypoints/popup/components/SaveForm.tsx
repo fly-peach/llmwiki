@@ -38,7 +38,6 @@ function slugifyFilename(value: string): string {
 
 interface Props {
   apiUrl: string;
-  accessToken: string | null;
 }
 
 interface TabInfo {
@@ -48,7 +47,7 @@ interface TabInfo {
   tabId: number;
 }
 
-export default function SaveForm({ apiUrl, accessToken }: Props) {
+export default function SaveForm({ apiUrl }: Props) {
   const [tab, setTab] = useState<TabInfo | null>(null);
   const [title, setTitle] = useState("");
   const [knowledgeBaseId, setKnowledgeBaseId] = useState<string | null>(null);
@@ -82,7 +81,7 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
       setCheckingExisting(true);
       setExistingDoc(null);
       try {
-        const doc = await getDocumentByUrl(apiUrl, accessToken, canonicalize(tab.url));
+        const doc = await getDocumentByUrl(apiUrl, canonicalize(tab.url));
         if (cancelled) return;
         if (doc) {
           setExistingDoc(doc);
@@ -109,7 +108,7 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [apiUrl, accessToken, tab]);
+  }, [apiUrl, tab]);
 
   async function detectCurrentPage() {
     const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -360,7 +359,7 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
     const canonicalUrl = canonicalize(tab.url);
     const normalizedFolderPath = normalizeFolderPath(folderPath);
 
-    const result = await saveWebPage(apiUrl, accessToken, knowledgeBaseId, {
+    const result = await saveWebPage(apiUrl, knowledgeBaseId, {
       url: canonicalUrl,
       title: title || tab.title,
       path: normalizedFolderPath,
@@ -411,7 +410,7 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
 
     const pdfBytes = new Uint8Array(downloadResult.blob);
     const normalizedFolderPath = normalizeFolderPath(folderPath);
-    await savePdf(apiUrl, accessToken, pdfBytes, downloadResult.filename, knowledgeBaseId, normalizedFolderPath);
+    await savePdf(apiUrl, pdfBytes, downloadResult.filename, normalizedFolderPath);
 
     setSelectedKnowledgeBaseId(knowledgeBaseId).catch(() => {});
     setSelectedFolderPath(normalizedFolderPath).catch(() => {});
@@ -425,7 +424,7 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
     // moves the document rather than selecting a target for a future save.
     if (existingDoc && existingDoc.knowledge_base_id !== id) {
       try {
-        await moveDocument(apiUrl, accessToken, existingDoc.id, id);
+        await moveDocument(apiUrl, existingDoc.id, id);
         setExistingDoc({ ...existingDoc, knowledge_base_id: id });
       } catch {
         setStatus({ type: "error", message: "Couldn't move to that knowledge base." });
@@ -464,7 +463,6 @@ export default function SaveForm({ apiUrl, accessToken }: Props) {
       {/* KB picker */}
       <KBPicker
         apiUrl={apiUrl}
-        accessToken={accessToken}
         value={knowledgeBaseId}
         onChange={handleKnowledgeBaseChange}
       />
