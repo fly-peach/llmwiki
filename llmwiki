@@ -2,13 +2,14 @@
 """LLM Wiki — local-first knowledge workspace CLI.
 
 Usage:
-    llmwiki open <workspace>         Init if needed + serve + open browser
-    llmwiki init <workspace>         Create .llmwiki/ + wiki/, index files
-    llmwiki serve <workspace>        Start API + web on localhost
-    llmwiki mcp <workspace>          Run stdio MCP server (for Claude config)
-    llmwiki mcp-config <workspace>   Print claude_desktop_config.json snippet
-    llmwiki reindex <workspace>      Force full rebuild of index.db
-"""
+    llmwiki open [workspace]         Init if needed + serve + open browser
+    llmwiki init [workspace]         Create .llmwiki/ + wiki/, index files
+    llmwiki serve [workspace]        Start API + web on localhost
+    llmwiki mcp [workspace]          Run stdio MCP server (for Claude config)
+    llmwiki mcp-config [workspace]   Print claude_desktop_config.json snippet
+    llmwiki reindex [workspace]      Force full rebuild of index.db
+
+If [workspace] is omitted, WORKSPACE_PATH from .env is used."""
 
 import argparse
 import json
@@ -227,27 +228,50 @@ def cmd_serve(workspace: str, open_browser: bool = True) -> None:
     api_port = os.environ.get("API_PORT", "8000")
     web_port = os.environ.get("WEB_PORT", "3000")
 
+    # --- Auto-detect LAN IP for LAN access ---
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.1)
+        # Doesn't actually connect — just used to learn the preferred outbound IP
+        s.connect(("192.168.18.1", 80))
+        lan_ip = s.getsockname()[0]
+        s.close()
+    except Exception:
+        lan_ip = "127.0.0.1"
+
     env = os.environ.copy()
     env["WORKSPACE_PATH"] = str(ws)
     env["APP_URL"] = f"http://localhost:{web_port}"
     env["API_URL"] = f"http://localhost:{api_port}"
+    # Note: intentionally NOT setting NEXT_PUBLIC_API_URL here — let the
+    # frontend auto-detect API host from window.location.hostname so LAN
+    # clients (e.g. http://192.168.18.57:3000) hit the server's LAN IP
+    # instead of their own localhost. Set NEXT_PUBLIC_API_URL in .env only
+    # if you need to override this for a specific deployment.
 
     print(f"Starting LLM Wiki for: {ws}")
     print(f"  API: http://localhost:{api_port}")
     print(f"  Web: http://localhost:{web_port}")
+    if lan_ip != "127.0.0.1":
+        print(f"  LAN: http://{lan_ip}:{web_port}  ← 局域网其他电脑用这个地址")
     print(f"  MCP: llmwiki mcp-config {ws}")
     print()
 
-    # Start API server
+    # Use llmwiki env python for API (dependencies are there)
+    api_python = os.environ.get("LLMWIKI_PYTHON") or "E:\\ana\\envs\\llmwiki\\python.exe"
+    if not Path(api_python).exists():
+        api_python = sys.executable  # fallback
+    # Start API server (already on 0.0.0.0, so LAN accessible)
     api_proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", api_port],
+        [api_python, "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", api_port],
         cwd=str(API_DIR),
         env=env,
     )
 
     # Start web dev server
     web_env = env.copy()
-    web_env["NEXT_PUBLIC_API_URL"] = f"http://localhost:{api_port}"
+    web_env["HOSTNAME"] = "0.0.0.0"  # bind all interfaces for LAN access
     web_env["PORT"] = web_port
     npm = shutil.which("pnpm") or shutil.which("npm")
     if npm is None:
@@ -318,7 +342,11 @@ def cmd_mcp(workspace: str, preset: str | None = None, allow: str | None = None)
     # the module no matter where the CLI was invoked from (Claude Desktop /
     # Code launches this with cwd set to ~ on macOS).
     os.chdir(str(MCP_DIR))
-    os.execvp(sys.executable, local_server_args)
+    # Use llmwiki env python for MCP server (dependencies are there)
+    mcp_python = os.environ.get("LLMWIKI_PYTHON") or "E:\\ana\\envs\\llmwiki\\python.exe"
+    if not Path(mcp_python).exists():
+        mcp_python = sys.executable  # fallback
+    os.execvp(mcp_python, [mcp_python] + local_server_args[1:])
 
 
 def cmd_mcp_config(workspace: str, name: str | None = None, preset: str | None = None, allow: str | None = None) -> None:
@@ -389,27 +417,20 @@ def main():
     sub = parser.add_subparsers(dest="command")
 
     p_open = sub.add_parser("open", help="Init if needed + serve + open browser")
-    p_open.add_argument("workspace", help="Path to workspace folder")
-
-    p_init = sub.add_parser("init", help="Initialize a workspace folder")
-    p_init.add_argument("workspace", help="Path to workspace folder")
-
-    p_serve = sub.add_parser("serve", help="Start API + web servers")
-    p_serve.add_argument("workspace", help="Path to workspace folder")
-
+    p_init = sub.add_parser("init", help="Create .llmwiki/ + wiki/, index files")
+    p_serve = sub.add_parser("serve", help="Start API + web on localhost")
     p_mcp = sub.add_parser("mcp", help="Run stdio MCP server")
-    p_mcp.add_argument("workspace", help="Path to workspace folder")
-    p_mcp.add_argument("--preset", choices=["read-only", "no-delete", "wiki-only", "full"], help="Permission preset")
-    p_mcp.add_argument("--allow", help="Comma-separated list of allowed tools (e.g. 'read,search,create')")
+    p_mcp.add_argument("--preset", choices=["read-only", "no-delete", "wiki-only", "full"])
+    p_mcp.add_argument("--allow")
+    p_config = sub.add_parser("mcp-config", help="Print claude_desktop_config.json snippet")
+    p_config.add_argument("--name")
+    p_config.add_argument("--preset")
+    p_config.add_argument("--allow")
+    p_reindex = sub.add_parser("reindex", help="Force full rebuild of index.db")
 
-    p_config = sub.add_parser("mcp-config", help="Print Claude MCP config snippet")
-    p_config.add_argument("workspace", help="Path to workspace folder")
-    p_config.add_argument("--name", help="Custom server name")
-    p_config.add_argument("--preset", choices=["read-only", "no-delete", "wiki-only", "full"], help="Permission preset")
-    p_config.add_argument("--allow", help="Comma-separated list of allowed tools (e.g. 'read,search,create')")
-
-    p_reindex = sub.add_parser("reindex", help="Force full rebuild of index")
-    p_reindex.add_argument("workspace", help="Path to workspace folder")
+    for p in [p_open, p_init, p_serve, p_mcp, p_config, p_reindex]:
+        p.add_argument("workspace", nargs="?", default=None,
+                       help="Path to workspace folder (defaults to WORKSPACE_PATH from .env)")
 
     args = parser.parse_args()
 
@@ -417,18 +438,28 @@ def main():
         parser.print_help()
         sys.exit(1)
 
+    # Resolve workspace: arg → env → error
+    ws = args.workspace or os.environ.get("WORKSPACE_PATH")
+    if not ws:
+        print(
+            "Error: no workspace specified. Provide a path argument or set "
+            "WORKSPACE_PATH in .env.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     if args.command == "open":
-        cmd_open(args.workspace)
+        cmd_open(ws)
     elif args.command == "init":
-        cmd_init(args.workspace)
+        cmd_init(ws)
     elif args.command == "serve":
-        cmd_serve(args.workspace)
+        cmd_serve(ws)
     elif args.command == "mcp":
-        cmd_mcp(args.workspace, preset=getattr(args, 'preset', None), allow=getattr(args, 'allow', None))
+        cmd_mcp(ws, preset=getattr(args, 'preset', None), allow=getattr(args, 'allow', None))
     elif args.command == "mcp-config":
-        cmd_mcp_config(args.workspace, args.name, preset=getattr(args, 'preset', None), allow=getattr(args, 'allow', None))
+        cmd_mcp_config(ws, args.name, preset=getattr(args, 'preset', None), allow=getattr(args, 'allow', None))
     elif args.command == "reindex":
-        cmd_reindex(args.workspace)
+        cmd_reindex(ws)
 
 
 if __name__ == "__main__":
