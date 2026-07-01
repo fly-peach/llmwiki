@@ -57,7 +57,7 @@ cd ..
 
 ```powershell
 conda activate llmwiki
-python llmwiki open C:\llmwiki-ws
+python llmwiki open ...
 ```
 
 > **workspace 路径建议放在本地磁盘**(如 `C:\llmwiki-ws`),不要放在网络映射驱动器上——文件监听器(watchfiles)和 SQLite 在网络盘上可能不灵敏或出现锁问题。
@@ -89,7 +89,7 @@ WEB_PORT=3000
 
 ```powershell
 conda activate llmwiki
-python llmwiki open C:\llmwiki-ws
+python llmwiki open ...
 ```
 
 #### 方式二: 使用环境变量
