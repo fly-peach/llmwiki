@@ -1,4 +1,13 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+// Default to an API on the same host as the browser is viewing the app from
+// (e.g. browsing http://192.168.18.57:3000 → API at http://192.168.18.57:8000),
+// so LAN/remote dev deployments work without per-host env config. On the server
+// (SSR, no window) fall back to localhost. An explicit NEXT_PUBLIC_API_URL
+// always wins and is respected on both sides.
+const API_URL =
+  process.env.NEXT_PUBLIC_API_URL
+  ?? (typeof window !== 'undefined'
+        ? `${window.location.protocol}//${window.location.hostname}:8000`
+        : 'http://localhost:8000')
 const WS_URL = API_URL.replace(/^http/, 'ws')
 
 /** Thrown by apiFetch on non-2xx responses. Callers can branch on `.status`
