@@ -27,8 +27,19 @@ try:
     env_file = Path(__file__).resolve().parent / ".env"
     if env_file.exists():
         load_dotenv(env_file)
+    else:
+        print(
+            f"Note: no .env file found next to {Path(__file__).resolve().name}; "
+            "using defaults / system environment. Copy .env.example to .env to set API_PORT/WEB_PORT.",
+            file=sys.stderr,
+        )
 except ImportError:
-    pass  # If python-dotenv is not installed, just use system environment
+    print(
+        "Warning: python-dotenv is not installed, so .env will be ignored. "
+        "Install it (pip install python-dotenv) to pick up API_PORT/WEB_PORT, "
+        "or set them as environment variables.",
+        file=sys.stderr,
+    )
 
 REPO_ROOT = Path(__file__).resolve().parent
 API_DIR = REPO_ROOT / "api"

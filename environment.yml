@@ -42,6 +42,7 @@ dependencies:
   - pip:
       - opendataloader-pdf==2.3.0
       - mcp[cli]==1.27.0
+      - python-dotenv==1.0.1
 
   # --- 测试依赖 (可选) ---
   # 运行测试时取消下面注释:
