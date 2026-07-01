@@ -1,4 +1,4 @@
-from typing import Optional, List, Set
+from typing import Optional, Set
 
 # 工具元数据 - 定义所有工具及其权限分类
 TOOL_METADATA = {
@@ -48,7 +48,7 @@ def resolve_allowed_tools(allow: Optional[str] = None, preset: Optional[str] = N
     return PRESETS['full'].copy()
 
 
-def register(mcp, get_user_id, fs_factory, allowed_tools: Optional[Set[str]] = None) -> None:
+def register(mcp, get_user_id, fs_factory, allowed_tools: Optional[Set[str]] = None, permission_mode: str = "full") -> None:
     """
     注册 MCP 工具
 
@@ -57,6 +57,7 @@ def register(mcp, get_user_id, fs_factory, allowed_tools: Optional[Set[str]] = N
         get_user_id: 获取用户ID的函数
         fs_factory: 文件系统工厂函数
         allowed_tools: 允许的工具名称集合（None 表示全部允许）
+        permission_mode: 权限模式名称，用于启用额外的运行时约束（如 wiki-only 路径限制）
     """
     from .guide import register as register_guide
     from .list import register as register_list
@@ -71,7 +72,8 @@ def register(mcp, get_user_id, fs_factory, allowed_tools: Optional[Set[str]] = N
 
     # 只注册允许的工具
     register_guide(mcp, get_user_id, fs_factory)
-    register_list(mcp, get_user_id, fs_factory)
+    if 'create_knowledge_base' in allowed or 'list_knowledge_bases' in allowed:
+        register_list(mcp, get_user_id, fs_factory, allowed_tools=allowed)
 
     if 'search' in allowed:
         register_search(mcp, get_user_id, fs_factory)
@@ -80,7 +82,7 @@ def register(mcp, get_user_id, fs_factory, allowed_tools: Optional[Set[str]] = N
         register_read(mcp, get_user_id, fs_factory)
 
     if {'create', 'edit', 'append'} & allowed:
-        register_write(mcp, get_user_id, fs_factory)
+        register_write(mcp, get_user_id, fs_factory, wiki_only=(permission_mode == 'wiki-only'))
 
     if 'delete' in allowed:
         register_delete(mcp, get_user_id, fs_factory)

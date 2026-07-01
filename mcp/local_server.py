@@ -144,6 +144,14 @@ def main():
             "but you cannot delete any files. "
             "Call the `guide` tool first to see available knowledge bases and learn the full workflow."
         )
+    elif args.preset == "wiki-only":
+        instructions = (
+            "You are connected to an LLM Wiki workspace in WIKI-ONLY mode. "
+            "You can read and search all indexed content, but create/edit/append writes "
+            "are restricted to the `/wiki/` folder. Do not modify raw source files. "
+            "Deletion is disabled. "
+            "Call the `guide` tool first to see available knowledge bases and learn the full workflow."
+        )
     else:
         instructions = (
             "You are connected to an LLM Wiki workspace. The user has uploaded files, notes, "
@@ -160,7 +168,13 @@ def main():
         return _LOCAL_USER_ID
 
     # 注册工具，传入允许的工具列表
-    register(mcp, _get_user_id, lambda user_id: SqliteVaultFS(user_id), allowed_tools=allowed_tools)
+    register(
+        mcp,
+        _get_user_id,
+        lambda user_id: SqliteVaultFS(user_id),
+        allowed_tools=allowed_tools,
+        permission_mode=perm_mode,
+    )
 
     @mcp.tool(name="ping", description="Test connectivity")
     async def ping() -> str:

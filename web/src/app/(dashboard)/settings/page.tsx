@@ -29,6 +29,14 @@ interface WorkspacesResponse {
   folders: WorkspaceFolder[]
 }
 
+interface McpLaunchConfig {
+  active: string | null
+  command: string
+  argsPrefix: string[]
+  cliPath: string
+  pythonPath: string
+}
+
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB']
@@ -388,12 +396,21 @@ const PRESET_TOOLS: Record<Exclude<PermissionMode, 'custom'>, Set<string>> = {
 }
 
 function McpExpander({ t, workspacePath }: { t: (k: string, v?: Record<string, string | number>) => string; workspacePath: string }) {
+  const token = useUserStore((s) => s.accessToken)
   const [open, setOpen] = React.useState(false)
   const [copied, setCopied] = React.useState(false)
   const [mode, setMode] = React.useState<PermissionMode>('full')
   const [customTools, setCustomTools] = React.useState<Set<string>>(new Set(PRESET_TOOLS['full']))
+  const [mcpLaunch, setMcpLaunch] = React.useState<McpLaunchConfig | null>(null)
 
-  const path = workspacePath || 'C:\\llmwiki-ws'
+  React.useEffect(() => {
+    if (!token) return
+    apiFetch<McpLaunchConfig>('/v1/workspaces/mcp-config', token)
+      .then((data) => setMcpLaunch(data))
+      .catch(() => {})
+  }, [token])
+
+  const path = workspacePath || mcpLaunch?.active || 'C:\\llmwiki-ws'
   const wsName = path.split(/[\\/]/).pop() || 'wiki'
 
   // Build the permission args based on selected mode
@@ -411,16 +428,19 @@ function McpExpander({ t, workspacePath }: { t: (k: string, v?: Record<string, s
   }, [mode, customTools])
 
   const configJson = React.useMemo(() => {
-    const args = ['mcp', path, ...permissionArgs]
+    const command = mcpLaunch?.command || 'llmwiki'
+    const args = mcpLaunch?.argsPrefix
+      ? [...mcpLaunch.argsPrefix, path, ...permissionArgs]
+      : ['mcp', path, ...permissionArgs]
     return JSON.stringify({
       mcpServers: {
         [`llmwiki-${wsName}`]: {
-          command: 'llmwiki',
+          command,
           args,
         },
       },
     }, null, 2)
-  }, [path, wsName, permissionArgs])
+  }, [path, wsName, permissionArgs, mcpLaunch])
 
   const handleCopy = React.useCallback(async () => {
     await navigator.clipboard.writeText(configJson)

@@ -6,6 +6,7 @@ server at a different folder's DB at runtime (no restart). See
 """
 
 from pathlib import Path
+import sys
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -67,6 +68,25 @@ async def add_workspace(body: WorkspacePath, request: Request, _user_id: str = D
     return {
         "active": active,
         "folders": [_folder_info(p, active) for p in workspace_registry.list_folders()],
+    }
+
+
+@router.get("/mcp-config")
+async def get_mcp_config(request: Request, _user_id: str = Depends(get_user_id)):
+    """Return a robust local MCP launch command for the active workspace.
+
+    The web UI should not assume `llmwiki` is on PATH. On Windows/conda setups,
+    Claude usually needs an explicit Python interpreter plus the repo CLI path.
+    """
+    active = workspace_registry.get_active() or getattr(request.app.state, "workspace_path", None)
+    repo_root = Path(__file__).resolve().parents[2]
+    cli_path = repo_root / "llmwiki"
+    return {
+        "active": active,
+        "command": sys.executable,
+        "argsPrefix": [str(cli_path), "mcp"],
+        "cliPath": str(cli_path),
+        "pythonPath": sys.executable,
     }
 
 

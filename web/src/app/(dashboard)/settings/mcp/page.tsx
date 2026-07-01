@@ -7,36 +7,55 @@ import { useI18n } from '@/lib/i18n'
 import { apiFetch } from '@/lib/api'
 import { useUserStore } from '@/stores'
 
+interface McpLaunchConfig {
+  active: string | null
+  command: string
+  argsPrefix: string[]
+  cliPath: string
+  pythonPath: string
+}
+
 export default function McpConfigPage() {
   const { t } = useI18n()
   const router = useRouter()
   const token = useUserStore((s) => s.accessToken)
   const [copied, setCopied] = React.useState(false)
   const [workspaceHint, setWorkspaceHint] = React.useState('C:\\llmwiki-ws')
+  const [mcpLaunch, setMcpLaunch] = React.useState<McpLaunchConfig | null>(null)
 
-  // Fetch the active workspace folder from the server.
+  // Fetch the active workspace folder and robust MCP launcher from the server.
   React.useEffect(() => {
     if (!token) return
     apiFetch<{ active: string | null }>('/v1/workspaces', token)
       .then((data) => { if (data?.active) setWorkspaceHint(data.active) })
       .catch(() => {})
+    apiFetch<McpLaunchConfig>('/v1/workspaces/mcp-config', token)
+      .then((data) => {
+        setMcpLaunch(data)
+        if (data?.active) setWorkspaceHint(data.active)
+      })
+      .catch(() => {})
   }, [token])
 
   const configJson = React.useMemo(() => {
     const wsName = workspaceHint.split(/[\\/]/).pop() || 'wiki'
+    const command = mcpLaunch?.command || 'llmwiki'
+    const args = mcpLaunch?.argsPrefix
+      ? [...mcpLaunch.argsPrefix, workspaceHint]
+      : ['mcp', workspaceHint]
     return JSON.stringify(
       {
         mcpServers: {
           [`llmwiki-${wsName}`]: {
-            command: 'llmwiki',
-            args: ['mcp', workspaceHint],
+            command,
+            args,
           },
         },
       },
       null,
       2,
     )
-  }, [workspaceHint])
+  }, [workspaceHint, mcpLaunch])
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(configJson)

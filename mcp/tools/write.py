@@ -190,10 +190,19 @@ def _renumber_colliding_footnotes(existing: str, addition: str) -> str:
 class WriteHandler:
     """Executes create, edit, and append operations on documents."""
 
-    def __init__(self, fs: VaultFS, kb: dict):
+    def __init__(self, fs: VaultFS, kb: dict, wiki_only: bool = False):
         self.fs = fs
         self.kb = kb
         self.kb_id = str(kb["id"])
+        self.wiki_only = wiki_only
+
+    def _enforce_write_scope(self, dir_path: str, filename: str) -> str | None:
+        if self.wiki_only and not dir_path.startswith("/wiki/"):
+            return (
+                "Error: MCP is running in wiki-only mode. "
+                f"Writes are restricted to `/wiki/`; refused `{dir_path}{filename}`."
+            )
+        return None
 
     async def create(self, path: str, title: str, content: str, tags: list[str], date_str: str, overwrite: bool) -> str:
         """Create a new document or overwrite an existing one."""
@@ -202,6 +211,9 @@ class WriteHandler:
 
         dir_path = self._to_dir_path(path)
         filename, file_type = self._title_to_filename(title)
+        scope_error = self._enforce_write_scope(dir_path, filename)
+        if scope_error:
+            return scope_error
         title = self._humanize_title(title)
         content = _ensure_wiki_frontmatter(content, title, tags, date_str, dir_path, filename, file_type)
 
@@ -273,6 +285,9 @@ class WriteHandler:
             return "Error: old_text is required for str_replace."
 
         dir_path, filename = resolve_path(path)
+        scope_error = self._enforce_write_scope(dir_path, filename)
+        if scope_error:
+            return scope_error
         doc = await self.fs.get_document(self.kb_id, filename, dir_path)
         if not doc:
             return f"Document '{path}' not found."
@@ -306,6 +321,9 @@ class WriteHandler:
     async def append(self, path: str, content: str) -> str:
         """Append content to the end of an existing document."""
         dir_path, filename = resolve_path(path)
+        scope_error = self._enforce_write_scope(dir_path, filename)
+        if scope_error:
+            return scope_error
         doc = await self.fs.get_document(self.kb_id, filename, dir_path)
         if not doc:
             return f"Document '{path}' not found."
@@ -445,13 +463,13 @@ class WriteHandler:
         return len(lines) - 1
 
 
-def register(mcp: FastMCP, get_user_id, fs_factory) -> None:
+def register(mcp: FastMCP, get_user_id, fs_factory, wiki_only: bool = False) -> None:
 
     async def _resolve(ctx: Context, knowledge_base: str):
         user_id = get_user_id(ctx)
         fs = fs_factory(user_id)
         kb = await fs.resolve_kb(knowledge_base)
-        return (WriteHandler(fs, kb), None) if kb else (None, f"Knowledge base '{knowledge_base}' not found.")
+        return (WriteHandler(fs, kb, wiki_only=wiki_only), None) if kb else (None, f"Knowledge base '{knowledge_base}' not found.")
 
     @mcp.tool(
         name="create",
