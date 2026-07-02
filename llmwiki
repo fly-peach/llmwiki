@@ -161,7 +161,7 @@ def _index_existing_files(ws: Path, db_path: Path, user_id: str, ws_id: str) -> 
                 continue
 
             full = Path(root_path) / filename
-            relative = str(full.relative_to(ws))
+            relative = str(full.relative_to(ws)).replace("\\", "/")
 
             if relative in existing:
                 continue
@@ -200,12 +200,12 @@ def _index_existing_files(ws: Path, db_path: Path, user_id: str, ws_id: str) -> 
                 conn.execute(
                     "INSERT INTO documents (id, user_id, filename, title, path, relative_path, "
                     "source_kind, file_type, file_size, status, content, tags, version, "
-                    "content_hash, mtime_ns, last_indexed_at, document_number) "
+                    "content_hash, mtime_ns, last_indexed_at, document_number, knowledge_base_id) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ready', ?, '[]', 0, ?, ?, datetime('now'), "
-                    "(SELECT COALESCE(MAX(document_number), 0) + 1 FROM documents))",
+                    "(SELECT COALESCE(MAX(document_number), 0) + 1 FROM documents), ?)",
                     (doc_id, user_id, filename, title, dir_path, relative,
                      source_kind, ext or "bin", stat.st_size, content,
-                     content_hash, int(stat.st_mtime_ns)),
+                     content_hash, int(stat.st_mtime_ns), ws_id),
                 )
                 indexed += 1
             except Exception as e:

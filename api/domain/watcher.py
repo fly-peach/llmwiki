@@ -117,7 +117,7 @@ def _get_source_kind(relative_path: str) -> str:
 
 async def _index_file(db: aiosqlite.Connection, workspace: Path, file_path: Path) -> None:
     """Index or re-index a single file."""
-    relative = str(file_path.relative_to(workspace))
+    relative = str(file_path.relative_to(workspace)).replace("\\", "/")
     filename = file_path.name
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
@@ -218,7 +218,7 @@ async def _index_file(db: aiosqlite.Connection, workspace: Path, file_path: Path
 async def _remove_file(db: aiosqlite.Connection, workspace: Path, file_path: Path) -> None:
     """Remove a file from the index."""
     try:
-        relative = str(file_path.relative_to(workspace))
+        relative = str(file_path.relative_to(workspace)).replace("\\", "/")
     except ValueError:
         return
 

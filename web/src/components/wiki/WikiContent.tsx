@@ -242,8 +242,10 @@ function CitationBadge({
   }, [])
 
   // Parse source into filename and page reference
-  const parts = source.match(/^(.+?)(?:,\s*p\.?\s*(.+))?$/)
-  const filename = parts?.[1]?.trim() ?? source
+  // Strip trailing description after — or – separator (same as backend parseCitationFilename)
+  const cleanSource = source.replace(/\s+[-–—]\s+.*$/, '').trim()
+  const parts = cleanSource.match(/^(.+?)(?:,\s*p\.?\s*(.+))?$/)
+  const filename = parts?.[1]?.trim() ?? cleanSource
   const pageRef = parts?.[2]?.trim()
   const pageNum = pageRef ? parseInt(pageRef, 10) : undefined
 
@@ -732,7 +734,8 @@ export function WikiContent({ content, title, path, onNavigate, onSourceClick, o
               </p>
               <ol className="list-decimal pl-5 space-y-1.5">
                 {entries.map(([num, source]) => {
-                  const filename = source.replace(/,\s*p\.?\s*.+$/, '').trim()
+                  const cleanSource = source.replace(/\s+[-–—]\s+.*$/, '').trim()
+                  const filename = cleanSource.replace(/,\s*p\.?\s*.+$/, '').trim()
                   return (
                     <li key={num} className="text-sm pl-1">
                       <button

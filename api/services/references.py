@@ -111,6 +111,11 @@ def extract_references(
         if not target:
             base = re.sub(r"\.(pdf|docx?|pptx?|xlsx?|csv|html?|md|txt)$", "", fn_lower)
             target = base_to_doc.get(base)
+        # Also try wiki_path_to_doc for "wiki/xxx.md" style citations
+        if not target and fn_lower.startswith("wiki/"):
+            target = wiki_path_to_doc.get(fn_lower.replace("wiki/", "", 1))
+            if not target:
+                target = wiki_path_to_doc.get(fn_lower.replace("wiki/", "", 1).replace(".md", ""))
         if target and target["id"] != doc_id:
             key = (target["id"], "cites")
             if key not in seen:

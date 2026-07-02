@@ -155,11 +155,19 @@ export function GraphViewer({ kbId, focusNodeId, onNavigateToDoc }: Props) {
         (e) => e.source === focusNodeId || e.target === focusNodeId,
       )
     } else {
-      // Global mode: only show wiki-to-wiki links, hide hub pages (overview/log)
+      // Global mode: show cites (footnotes) and links_to (internal links), hide hub pages (overview/log)
+      // Include cited source docs even when showSources is off
       const hubTitles = new Set(['overview', 'log'])
-      relevantEdges = relevantEdges.filter((e) => e.type === 'links_to')
+      const citedNodeIds = new Set<string>()
+      for (const e of relevantEdges) {
+        citedNodeIds.add(e.target)
+        citedNodeIds.add(e.source)
+      }
       relevantNodes = relevantNodes.filter((n) => {
-        if (n.source_kind !== 'wiki' && !showSources) return false
+        if (n.source_kind !== 'wiki' && !showSources) {
+          // Include source docs that are cited by wiki pages
+          return citedNodeIds.has(n.id)
+        }
         return !hubTitles.has(n.title.toLowerCase())
       })
     }
